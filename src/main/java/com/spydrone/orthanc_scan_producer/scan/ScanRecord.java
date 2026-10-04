@@ -15,5 +15,5 @@ public record ScanRecord(
 		@NotBlank String lotId,
 		@NotBlank String destination,
 		ScanType scanType,
-		@NotNull String note) {
+		String note) {
 }
