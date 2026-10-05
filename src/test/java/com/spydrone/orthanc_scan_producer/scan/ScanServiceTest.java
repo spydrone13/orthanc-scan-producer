@@ -18,7 +18,7 @@ class ScanServiceTest {
 	private final RabbitTemplate rabbitTemplate = mock(RabbitTemplate.class);
 	private final ScanService service = new ScanService(rabbitTemplate, "ex", "rk");
 	private final ScanRecord record =
-			new ScanRecord("abc", "u", "S1", "L1", "S2", ScanType.TRANSITIONAL, "");
+			new ScanRecord("abc", "u", "S1", "L1", "S2", "W1", ScanType.TRANSITIONAL, "");
 
 	@Test
 	void repeatSendPublishesOnce() {

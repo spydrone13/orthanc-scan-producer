@@ -9,7 +9,8 @@ public record ScanResponse(
 		String userName,
 		String currentStage,
 		String lotId,
-		String destination,
+		String destinationStage,
+		String destinationWipLocation,
 		ScanType scanType,
 		String note,
 		String errorCode,
@@ -17,6 +18,6 @@ public record ScanResponse(
 
 	public static ScanResponse accepted(ScanRecord record) {
 		return new ScanResponse(record.clientId(), record.userName(), record.currentStage(), record.lotId(),
-				record.destination(), record.scanType(), record.note(), null, null);
+				record.destinationStage(), record.destinationWipLocation(), record.scanType(), record.note(), null, null);
 	}
 }
