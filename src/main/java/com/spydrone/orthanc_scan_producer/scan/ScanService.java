@@ -1,5 +1,6 @@
 package com.spydrone.orthanc_scan_producer.scan;
 
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Service;
 public class ScanService {
 
 	static final String LOT_ON_HOLD = "LOT_ON_HOLD";
+	private static final String ACTIVE = "active";
 
 	private final RabbitTemplate rabbitTemplate;
 	private final LotClient lotClient;
@@ -35,21 +37,33 @@ public class ScanService {
 	}
 
 	/**
-	 * Publishes a new scan, unless it would move a held lot out of its current stage. Throws
-	 * AmqpException if the broker is unreachable, leaving the scan resendable.
+	 * Publishes a new scan, unless the lot isn't active or the scan would move a held lot out of its
+	 * current stage. Throws AmqpException if the broker is unreachable, leaving the scan resendable.
 	 */
 	public ScanResponse submit(ScanRecord record) {
 		ScanResponse existing = accepted.get(record.clientId());
 		if (existing != null) {
 			return existing;
 		}
-		Optional<LotState> lot = lotClient.find(record.lotId());
-		if (lot.isPresent() && lot.get().onHold() && !record.destinationStage().equals(lot.get().currentStage())) {
-			return ScanResponse.rejected(record, LOT_ON_HOLD, "Lot " + record.lotId() + " is on hold");
+		Optional<ScanResponse> rejection = lotClient.find(record.lotId()).flatMap(lot -> rejection(record, lot));
+		if (rejection.isPresent()) {
+			return rejection.get();
 		}
 		rabbitTemplate.convertAndSend(exchange, routingKey, record);
 		ScanResponse response = ScanResponse.accepted(record);
 		ScanResponse raced = accepted.putIfAbsent(record.clientId(), response);
 		return raced != null ? raced : response;
+	}
+
+	/** Status first (a finished lot can't be scanned at all), then hold (can't leave its stage). */
+	private static Optional<ScanResponse> rejection(ScanRecord record, LotState lot) {
+		if (lot.status() != null && !ACTIVE.equals(lot.status())) {
+			return Optional.of(ScanResponse.rejected(record, "LOT_" + lot.status().toUpperCase(Locale.ROOT),
+					"Lot " + record.lotId() + " is " + lot.status()));
+		}
+		if (lot.onHold() && !record.destinationStage().equals(lot.currentStage())) {
+			return Optional.of(ScanResponse.rejected(record, LOT_ON_HOLD, "Lot " + record.lotId() + " is on hold"));
+		}
+		return Optional.empty();
 	}
 }

@@ -27,7 +27,7 @@ class ScanServiceTest {
 
 	@Test
 	void heldLotLeavingItsStageIsRejectedAndNotPublished() {
-		given(lotClient.find("L1")).willReturn(Optional.of(new LotState("S1", true)));
+		given(lotClient.find("L1")).willReturn(Optional.of(new LotState("S1", true, "active")));
 
 		ScanResponse response = service.submit(record);
 
@@ -39,7 +39,7 @@ class ScanServiceTest {
 
 	@Test
 	void heldLotMovingWithinItsStageIsPublished() {
-		given(lotClient.find("L1")).willReturn(Optional.of(new LotState("S2", true)));
+		given(lotClient.find("L1")).willReturn(Optional.of(new LotState("S2", true, "active")));
 
 		assertThat(service.submit(record).errorCode()).isNull();
 		verify(rabbitTemplate).convertAndSend("ex", "rk", record);
@@ -51,7 +51,7 @@ class ScanServiceTest {
 		assertThat(service.submit(record).errorCode()).isNull();
 
 		ScanRecord other = new ScanRecord("def", "u", "S1", "L2", "S2", null, ScanType.TRANSITIONAL, "");
-		given(lotClient.find("L2")).willReturn(Optional.of(new LotState("S1", false)));
+		given(lotClient.find("L2")).willReturn(Optional.of(new LotState("S1", false, "active")));
 		assertThat(service.submit(other).errorCode()).isNull();
 
 		verify(rabbitTemplate).convertAndSend("ex", "rk", record);
@@ -61,12 +61,45 @@ class ScanServiceTest {
 	@Test
 	void rejectedScanIsCheckedAgainWhenResent() {
 		given(lotClient.find("L1"))
-				.willReturn(Optional.of(new LotState("S1", true)))
-				.willReturn(Optional.of(new LotState("S1", false)));
+				.willReturn(Optional.of(new LotState("S1", true, "active")))
+				.willReturn(Optional.of(new LotState("S1", false, "active")));
 
 		assertThat(service.submit(record).errorCode()).isEqualTo("LOT_ON_HOLD");
 		assertThat(service.submit(record).errorCode()).isNull();
 		verify(rabbitTemplate, times(1)).convertAndSend("ex", "rk", record);
+	}
+
+	@Test
+	void canceledLotIsRejectedAndNotPublished() {
+		given(lotClient.find("L1")).willReturn(Optional.of(new LotState("S1", false, "canceled")));
+
+		ScanResponse response = service.submit(record);
+
+		assertThat(response.errorCode()).isEqualTo("LOT_CANCELED");
+		assertThat(response.errorMessage()).isEqualTo("Lot L1 is canceled");
+		verify(rabbitTemplate, never()).convertAndSend(any(String.class), any(String.class), any(Object.class));
+	}
+
+	@Test
+	void completeLotIsRejectedEvenWithinItsStage() {
+		given(lotClient.find("L1")).willReturn(Optional.of(new LotState("S2", false, "complete")));
+
+		assertThat(service.submit(record).errorCode()).isEqualTo("LOT_COMPLETE");
+	}
+
+	@Test
+	void statusIsCheckedBeforeHold() {
+		given(lotClient.find("L1")).willReturn(Optional.of(new LotState("S1", true, "destroyed")));
+
+		assertThat(service.submit(record).errorCode()).isEqualTo("LOT_DESTROYED");
+	}
+
+	@Test
+	void missingStatusIsTreatedAsActive() {
+		given(lotClient.find("L1")).willReturn(Optional.of(new LotState("S1", false, null)));
+
+		assertThat(service.submit(record).errorCode()).isNull();
+		verify(rabbitTemplate).convertAndSend("ex", "rk", record);
 	}
 
 	@Test

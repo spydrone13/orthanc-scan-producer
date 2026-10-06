@@ -24,7 +24,7 @@ class LotClientTest {
 				 "status":"active","onHold":true,"updatedAt":"2026-10-06T12:00:00Z"}
 				""", MediaType.APPLICATION_JSON));
 
-		assertThat(client.find("L1")).contains(new LotState("intake", true));
+		assertThat(client.find("L1")).contains(new LotState("intake", true, "active"));
 		server.verify();
 	}
 
