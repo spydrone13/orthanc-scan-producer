@@ -20,4 +20,11 @@ public record ScanResponse(
 		return new ScanResponse(record.clientId(), record.userName(), record.currentStage(), record.lotId(),
 				record.destinationStage(), record.destinationWipLocation(), record.scanType(), record.note(), null, null);
 	}
+
+	/** Not published; the UI shows the scan as rejected (not resendable). */
+	public static ScanResponse rejected(ScanRecord record, String errorCode, String errorMessage) {
+		return new ScanResponse(record.clientId(), record.userName(), record.currentStage(), record.lotId(),
+				record.destinationStage(), record.destinationWipLocation(), record.scanType(), record.note(),
+				errorCode, errorMessage);
+	}
 }
