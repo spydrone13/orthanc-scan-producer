@@ -35,3 +35,6 @@ build/
 ### Local config (see README) ###
 application-secrets.properties
 application-local.properties
+
+### Runtime data (lot-stage cache) ###
+/data/

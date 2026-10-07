@@ -28,6 +28,8 @@
 	</scm>
 	<properties>
 		<java.version>25</java.version>
+		<!-- orthanc-scan-ui production build, bundled into the jar as static/ (see README). -->
+		<ui.dist>${project.basedir}/../orthanc-scan-ui/dist/orthanc-scan-ui/browser</ui.dist>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -60,6 +62,27 @@
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-resources-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>copy-ui</id>
+						<phase>prepare-package</phase>
+						<goals>
+							<goal>copy-resources</goal>
+						</goals>
+						<configuration>
+							<outputDirectory>${project.build.outputDirectory}/static</outputDirectory>
+							<resources>
+								<resource>
+									<directory>${ui.dist}</directory>
+								</resource>
+							</resources>
+						</configuration>
+					</execution>
+				</executions>
 			</plugin>
 			<!-- Developer-only config (see README) must never ship in the jar. -->
 			<plugin>

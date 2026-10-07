@@ -4,6 +4,10 @@ Spring Boot API (port 3000) that accepts scans from orthanc-scan-ui at `POST /ap
 the RabbitMQ exchange `orthanc.scans`, where orthanc-scan-consumer picks them up. Before publishing, the producer
 asks the consumer whether the lot is on hold (`GET /api/lots/{lotId}`).
 
+It also serves the UI itself and the lot-stage catalog (`GET /api/lot-stages`, passed through from the consumer).
+Both are built to keep the plant scanning when the off-site consumer can't be reached. See
+[Deploying in the plant](#deploying-in-the-plant).
+
 ## Configuration files
 
 `src/main/resources/application.properties` holds the defaults, which are set up for a fully local run
@@ -124,3 +128,42 @@ The management UI is at http://localhost:15672 (guest / guest).
 ```
 
 The tests don't need RabbitMQ, the consumer, or either of the files above.
+
+## Deploying in the plant
+
+The producer and RabbitMQ run on the plant network, and the consumer runs off-site. Browsers only talk to the
+producer, so scanning keeps working when the plant loses its internet connection:
+
+| Piece          | When the consumer can't be reached                                                         |
+|----------------|--------------------------------------------------------------------------------------------|
+| UI             | Served from this jar.                                                                      |
+| Lot stages     | Served from the last copy fetched, saved at `app.lot-stages.cache-file`.                   |
+| Hold check     | Skipped after a 2 s timeout; the consumer checks holds again when it processes the scan.  |
+| Scans          | Published to the plant's RabbitMQ and kept there until the consumer reconnects.            |
+
+### Building
+
+The jar carries the UI's production build. Build the UI first, then package:
+
+```bash
+cd ../orthanc-scan-ui && npm ci && npx ng build
+cd ../orthanc-scan-producer && ./mvnw package
+```
+
+`./mvnw package` copies `../orthanc-scan-ui/dist/orthanc-scan-ui/browser` into the jar. If the UI build is
+somewhere else, pass `-Dui.dist=<path>`. If the folder doesn't exist, the jar is built without a UI, so check
+that `/` loads after deploying.
+
+### Running
+
+```bash
+java -jar orthanc-scan-producer-0.0.1-SNAPSHOT.jar
+```
+
+Open `http://<plant-host>:3000/`. Set `app.lot-stages.cache-file` to a path on persistent disk; the default
+`./data/lot-stages.json` is relative to the working directory. Until the producer has reached the consumer once,
+it has no catalog to fall back on and `GET /api/lot-stages` returns 503. Browsers also keep the last catalog
+they loaded, so a scanner that has used the app before still works in that case.
+
+In development, `ng serve` on port 4200 talks to this app on port 3000 across origins, which
+`app.cors.allowed-origins` allows. The bundled UI is same-origin and needs no CORS.
