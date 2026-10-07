@@ -6,6 +6,8 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+import java.time.Instant;
+
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
@@ -21,10 +23,12 @@ class LotClientTest {
 	void mapsLotFromConsumer() {
 		server.expect(requestTo("http://consumer/api/lots/L1")).andRespond(withSuccess("""
 				{"lotId":"L1","currentStage":"intake","wipLocation":"INTAKE-001",
-				 "status":"active","onHold":true,"updatedAt":"2026-10-06T12:00:00Z"}
+				 "status":"active","onHold":true,"updatedAt":"2026-10-06T12:00:00Z",
+				 "lastScan":{"clientId":"c1","userName":"jsmith","at":"2026-10-06T11:59:00Z"}}
 				""", MediaType.APPLICATION_JSON));
 
-		assertThat(client.find("L1")).contains(new LotState("intake", true, "active"));
+		assertThat(client.find("L1")).contains(new LotState("intake", "INTAKE-001", true, "active",
+				new LotState.LastScan("c1", "jsmith", Instant.parse("2026-10-06T11:59:00Z"))));
 		server.verify();
 	}
 
