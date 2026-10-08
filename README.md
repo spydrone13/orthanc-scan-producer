@@ -83,10 +83,12 @@ Create `application-secrets.properties` (above) and `application-local.propertie
 spring.rabbitmq.host=<test-rabbitmq-host>
 app.scans.queue=orthanc.scans.<your-name>
 app.scans.routing-key=scan.created.<your-name>
+app.scans.dead-letter-exchange=orthanc.scans.dlx.<your-name>
+app.scans.dead-letter-queue=orthanc.scans.dlq.<your-name>
 ```
 
 Leave `app.consumer.base-url` out so lot lookups go to your local consumer on port 3001. Create the same two
-files in orthanc-scan-consumer, with the **same** queue and routing key (see its README). Run both apps with the
+files in orthanc-scan-consumer, with the **same** queue, routing key and dead-letter names (see its README). Run both apps with the
 `local` profile.
 
 - **The routing key must be different from `scan.created`, not just the queue name.** The exchange delivers a
@@ -94,8 +96,10 @@ files in orthanc-scan-consumer, with the **same** queue and routing key (see its
   copies of everyone's test scans, and the test consumer would still receive yours.
 - Whichever app starts first creates your queue and binds it to `orthanc.scans`, so your RabbitMQ user needs
   configure, write and read permission on it.
-- The queue is durable, so it stays on the test broker after you stop. Delete it in the RabbitMQ management UI
-  when you no longer need it.
+- The queues are durable, so they stay on the test broker after you stop. Delete your queue, dead-letter queue
+  and dead-letter exchange in the RabbitMQ management UI when you no longer need them.
+- The scans queue has dead-letter arguments, and RabbitMQ won't redeclare an existing queue with different
+  ones. A queue created by an older version must be deleted once (see the consumer's README, "Failed scans").
 
 ### Mode 3: everything local
 
