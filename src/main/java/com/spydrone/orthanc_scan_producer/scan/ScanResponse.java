@@ -20,6 +20,7 @@ public record ScanResponse(
 		ScanType scanType,
 		String note,
 		String correctionReason,
+		Boolean locationConfirmed,
 		String errorCode,
 		String errorMessage,
 		RecordedLocation recorded) {
@@ -39,13 +40,13 @@ public record ScanResponse(
 	}
 
 	/**
-	 * Not published: the records have the lot elsewhere. The UI may resend the scan with a
-	 * correctionReason once the operator confirms the lot is here.
+	 * Not published: the records have the lot elsewhere. The UI may resend the scan with
+	 * locationConfirmed once the operator confirms the lot is here.
 	 */
 	public static ScanResponse mismatch(ScanRecord record, String errorCode, String errorMessage,
 			RecordedLocation recorded) {
 		return new ScanResponse(record.clientId(), record.userName(), record.currentStage(), record.lotId(),
 				record.destinationStage(), record.destinationWipLocation(), record.scanType(), record.note(),
-				record.correctionReason(), errorCode, errorMessage, recorded);
+				record.correctionReason(), record.locationConfirmed(), errorCode, errorMessage, recorded);
 	}
 }

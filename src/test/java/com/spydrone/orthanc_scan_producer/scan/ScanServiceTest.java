@@ -31,7 +31,7 @@ class ScanServiceTest {
 	private final StageCatalog stageCatalog = mock(StageCatalog.class);
 	private final ScanService service = new ScanService(rabbitTemplate, lotClient, stageCatalog, "ex", "rk");
 	private final ScanRecord record =
-			new ScanRecord("abc", "u", "S1", "L1", "S2", "W1", ScanType.TRANSITIONAL, "", null);
+			new ScanRecord("abc", "u", "S1", "L1", "S2", "W1", ScanType.TRANSITIONAL, "", null, null);
 
 	@Test
 	void heldLotLeavingItsStageIsRejectedAndNotPublished() {
@@ -58,7 +58,7 @@ class ScanServiceTest {
 		given(lotClient.find("L1")).willReturn(Optional.empty());
 		assertThat(service.submit(record).errorCode()).isNull();
 
-		ScanRecord other = new ScanRecord("def", "u", "S1", "L2", "S2", null, ScanType.TRANSITIONAL, "", null);
+		ScanRecord other = new ScanRecord("def", "u", "S1", "L2", "S2", null, ScanType.TRANSITIONAL, "", null, null);
 		given(lotClient.find("L2")).willReturn(Optional.of(new LotState("S1", false, "active")));
 		assertThat(service.submit(other).errorCode()).isNull();
 
@@ -140,7 +140,7 @@ class ScanServiceTest {
 	private static final Instant EARLIER = Instant.parse("2026-10-07T09:00:00Z");
 
 	private static ScanRecord scan(String from, String to, String wip, String correctionReason) {
-		return new ScanRecord("abc", "u", from, "L1", to, wip, ScanType.TRANSITIONAL, "", correctionReason);
+		return new ScanRecord("abc", "u", from, "L1", to, wip, ScanType.TRANSITIONAL, "", correctionReason, null);
 	}
 
 	private void assertNotPublished() {
@@ -197,7 +197,7 @@ class ScanServiceTest {
 		given(stageCatalog.stages()).willReturn(Optional.of(STAGES));
 
 		assertThat(service.submit(scan("S1", "S1", "anything", null)).errorCode()).isNull();
-		assertThat(service.submit(new ScanRecord("def", "u", "S9", "L1", "S3", null, ScanType.TRANSITIONAL, "", null))
+		assertThat(service.submit(new ScanRecord("def", "u", "S9", "L1", "S3", null, ScanType.TRANSITIONAL, "", null, null))
 				.errorCode()).isNull();
 	}
 
@@ -259,6 +259,19 @@ class ScanServiceTest {
 	}
 
 	@Test
+	void correctionConfirmedWithoutAReasonIsPublished() {
+		given(lotClient.find("L1")).willReturn(Optional.of(new LotState("S3", false, "active")));
+		ScanRecord confirmed = new ScanRecord("abc", "u", "S1", "L1", "S2", null, ScanType.TRANSITIONAL, "", null,
+				true);
+
+		ScanResponse response = service.submit(confirmed);
+
+		assertThat(response.errorCode()).isNull();
+		assertThat(response.locationConfirmed()).isTrue();
+		verify(rabbitTemplate).convertAndSend("ex", "rk", confirmed);
+	}
+
+	@Test
 	void confirmedCorrectionIsStillRouteCheckedFromTheScanStage() {
 		given(stageCatalog.stages()).willReturn(Optional.of(STAGES));
 		given(lotClient.find("L1")).willReturn(Optional.of(new LotState("S2", false, "active")));
@@ -272,6 +285,6 @@ class ScanServiceTest {
 
 		assertThat(service.submit(scan("S1", "S1", "W0", "here")).errorCode()).isNull();
 		assertThat(service.submit(new ScanRecord("def", "u", "S1", "L1", "S2", null, ScanType.TRANSITIONAL, "",
-				"here")).errorCode()).isEqualTo("LOT_ON_HOLD");
+				"here", null)).errorCode()).isEqualTo("LOT_ON_HOLD");
 	}
 }

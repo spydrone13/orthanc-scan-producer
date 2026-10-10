@@ -56,7 +56,7 @@ public class ScanService {
 	 * <li>the lot isn't active
 	 * <li>it's on hold and the scan would move it out of its stage
 	 * <li>the records have it at another stage than the scan's, and the operator hasn't confirmed it's
-	 * here (no correctionReason)
+	 * here (see {@link ScanRecord#confirmsLocation()})
 	 * <li>the destination isn't a next stage of the scan's stage, or its WIP location isn't allowed there
 	 * </ol>
 	 * The lot checks are skipped if the consumer can't be asked, and the route check if no stage catalog
@@ -93,7 +93,7 @@ public class ScanService {
 		if (lot.onHold() && !record.destinationStage().equals(from)) {
 			return Optional.of(ScanResponse.rejected(record, LOT_ON_HOLD, "Lot " + record.lotId() + " is on hold"));
 		}
-		if (mismatch && isBlank(record.correctionReason())) {
+		if (mismatch && !record.confirmsLocation()) {
 			return Optional.of(mismatchRejection(record, lot, stages.orElse(Map.of())));
 		}
 		return Optional.empty();

@@ -124,6 +124,7 @@ scans that fail with 503.
       | `scanType`               | no       | `transitional` or `informational`                  |
       | `note`                   | no       |                                                    |
       | `correctionReason`       | no       | Max 2000 characters (see PROD-8)                   |
+      | `locationConfirmed`      | no       | Boolean; operator confirmed the lot is here (PROD-8) |
 
 - [ ] A blank required field, or a `correctionReason` over 2000 characters, returns 400
 - [ ] An optional `Idempotency-Key` header that doesn't equal `clientId` returns 400
@@ -210,13 +211,13 @@ is published.
 
 **Description:** When the records have the lot at a different stage than the one it's being scanned at, show the
 operator where the records have it and who logged it there. The operator can confirm the lot really is here and
-resend the scan with a `correctionReason`, which corrects the record.
+resend the scan with `locationConfirmed: true` and an optional `correctionReason`, which corrects the record.
 
 **Acceptance criteria:**
 - [ ] A mismatch is when the recorded `currentStage` is not null, is not the scan's `currentStage`, and is not the
       scan's `destinationStage`. A recorded stage equal to the destination means the same move was scanned twice,
       which is not a mismatch.
-- [ ] A mismatch with a blank `correctionReason` is rejected with `LOT_LOCATION_MISMATCH` and a
+- [ ] A mismatch that is not confirmed (no `locationConfirmed: true` and a blank `correctionReason`) is rejected with `LOT_LOCATION_MISMATCH` and a
       `recorded { stage, wipLocation, scannedBy, scannedAt }` object. `scannedBy` and `scannedAt` come from
       `lastScan` and are left out when it is unknown.
 - [ ] Message wording uses stage descriptions from the catalog (or the id when there is none):
@@ -224,7 +225,7 @@ resend the scan with a `correctionReason`, which corrects the record.
     "Lot {lot} was never logged out of {recorded}{by}. Confirm it is here at {here} to correct the record."
   - Otherwise: "Records show lot {lot} at {recorded}{by}, not {here}. Confirm it is here to correct the record."
   - `{by}` = " (logged by {userName} at yyyy-MM-dd HH:mm)" in the server's time zone, or empty when there's no `lastScan`
-- [ ] A mismatch with a `correctionReason` passes this check and is published with the reason (the status and hold
+- [ ] A confirmed mismatch (`locationConfirmed: true`, or a non-blank `correctionReason` from older UIs) passes this check and is published with any reason (the status and hold
       checks still apply)
 - [ ] With no catalog, the messages fall back to stage ids and always use the "Records show" wording
 
