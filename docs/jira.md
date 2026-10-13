@@ -25,9 +25,9 @@ serves the UI and the stage catalog to the plant. Scanning must keep working whi
 unreachable.
 
 **Definition of done for every ticket in the epic:**
-- [ ] Unit tests cover the acceptance criteria and run with `./mvnw test`, without RabbitMQ or the consumer running
-- [ ] New properties have defaults in `application.properties` and are mentioned in the README
-- [ ] Code reviewed and merged to `main`
+- Unit tests cover the acceptance criteria and run with `./mvnw test`, without RabbitMQ or the consumer running
+- New properties have defaults in `application.properties` and are mentioned in the README
+- Code reviewed and merged to `main`
 
 ---
 
@@ -38,12 +38,12 @@ unreachable.
 **Description:** Create the Spring Boot project that the other tickets build on.
 
 **Acceptance criteria:**
-- [ ] Maven project `com.spydrone:orthanc-scan-producer` with the Maven wrapper (`mvnw`, `mvnw.cmd`)
-- [ ] Parent `spring-boot-starter-parent` 4.1.1 and Java 25
-- [ ] Dependencies: `spring-boot-starter-amqp`, `spring-boot-starter-webmvc`, `spring-boot-starter-validation`;
+- Maven project `com.spydrone:orthanc-scan-producer` with the Maven wrapper (`mvnw`, `mvnw.cmd`)
+- Parent `spring-boot-starter-parent` 4.1.1 and Java 25
+- Dependencies: `spring-boot-starter-amqp`, `spring-boot-starter-webmvc`, `spring-boot-starter-validation`;
       test scope: `spring-boot-starter-amqp-test`, `spring-boot-starter-webmvc-test`
-- [ ] `spring.application.name=orthanc-scan-producer`, `server.port=3000`
-- [ ] A context-loads test passes with `./mvnw test`
+- `spring.application.name=orthanc-scan-producer`, `server.port=3000`
+- A context-loads test passes with `./mvnw test`
 
 **Reference:** `pom.xml`, `…/OrthancScanProducerApplication.java`, `src/test/.../OrthancScanProducerApplicationTests.java`
 
@@ -57,14 +57,14 @@ unreachable.
 two personal files that must never be committed or shipped: one for RabbitMQ credentials and one for local overrides.
 
 **Acceptance criteria:**
-- [ ] `application.properties` defaults: RabbitMQ `localhost:5672` as `guest`/`guest`,
+- `application.properties` defaults: RabbitMQ `localhost:5672` as `guest`/`guest`,
       `app.consumer.base-url=http://localhost:3001`
-- [ ] `spring.config.import=optional:classpath:application-secrets.properties` loads the secrets file when it exists,
+- `spring.config.import=optional:classpath:application-secrets.properties` loads the secrets file when it exists,
       with or without a profile
-- [ ] `application-local.properties` is loaded with the `local` profile
-- [ ] Precedence: `application-local.properties` > `application-secrets.properties` > `application.properties`
-- [ ] Both files are listed in `.gitignore`
-- [ ] Both files are excluded from the jar by `maven-jar-plugin` `<excludes>`. Check with `jar tf` on the packaged jar.
+- `application-local.properties` is loaded with the `local` profile
+- Precedence: `application-local.properties` > `application-secrets.properties` > `application.properties`
+- Both files are listed in `.gitignore`
+- Both files are excluded from the jar by `maven-jar-plugin` `<excludes>`. Check with `jar tf` on the packaged jar.
 
 **Reference:** `src/main/resources/application.properties`, `pom.xml` (maven-jar-plugin), `.gitignore`
 
@@ -82,15 +82,15 @@ two personal files that must never be committed or shipped: one for RabbitMQ cre
 same objects. Whichever app starts first creates them.
 
 **Acceptance criteria:**
-- [ ] Direct exchange from `app.scans.exchange` (default `orthanc.scans`)
-- [ ] Durable queue from `app.scans.queue` (default `orthanc.scans`), with arguments:
+- Direct exchange from `app.scans.exchange` (default `orthanc.scans`)
+- Durable queue from `app.scans.queue` (default `orthanc.scans`), with arguments:
       dead-letter exchange `app.scans.dead-letter-exchange` (default `orthanc.scans.dlx`) and dead-letter routing key
       equal to the DLQ name
-- [ ] Queue bound to the exchange with `app.scans.routing-key` (default `scan.created`)
-- [ ] Direct dead-letter exchange, with a durable dead-letter queue from `app.scans.dead-letter-queue` (default
+- Queue bound to the exchange with `app.scans.routing-key` (default `scan.created`)
+- Direct dead-letter exchange, with a durable dead-letter queue from `app.scans.dead-letter-queue` (default
       `orthanc.scans.dlq`) bound to it by the queue's own name
-- [ ] Messages are serialized as JSON (`JacksonJsonMessageConverter` bean)
-- [ ] All names come from properties, so a developer can point at a personal queue (see PROD-14)
+- Messages are serialized as JSON (`JacksonJsonMessageConverter` bean)
+- All names come from properties, so a developer can point at a personal queue (see PROD-14)
 
 **Reference:** `…/scan/RabbitConfig.java`
 
@@ -111,7 +111,7 @@ echoes it back. Validation failures and broker outages need distinct responses, 
 scans that fail with 503.
 
 **Acceptance criteria:**
-- [ ] `POST /api/scans` accepts a JSON `ScanRecord`:
+- `POST /api/scans` accepts a JSON `ScanRecord`:
 
       | Field                    | Required | Notes                                              |
       |--------------------------|----------|----------------------------------------------------|
@@ -126,16 +126,16 @@ scans that fail with 503.
       | `correctionReason`       | no       | Max 2000 characters (see PROD-8)                   |
       | `locationConfirmed`      | no       | Boolean; operator confirmed the lot is here (PROD-8) |
 
-- [ ] A blank required field, or a `correctionReason` over 2000 characters, returns 400
-- [ ] An optional `Idempotency-Key` header that doesn't equal `clientId` returns 400
+- A blank required field, or a `correctionReason` over 2000 characters, returns 400
+- An optional `Idempotency-Key` header that doesn't equal `clientId` returns 400
       `"Idempotency-Key must match clientId"`
-- [ ] A valid scan is published to `app.scans.exchange` with `app.scans.routing-key` and returns 200 with a
+- A valid scan is published to `app.scans.exchange` with `app.scans.routing-key` and returns 200 with a
       `ScanResponse` that echoes every field. Null fields are left out of the JSON.
-- [ ] `ScanResponse` also has `errorCode`, `errorMessage` and `recorded` for rejections (used by PROD-7, 8 and 11).
+- `ScanResponse` also has `errorCode`, `errorMessage` and `recorded` for rejections (used by PROD-7, 8 and 11).
       A rejection is still a 200.
-- [ ] When the broker can't be reached (any `AmqpException`), the response is 503
+- When the broker can't be reached (any `AmqpException`), the response is 503
       `{"message": "Scan service temporarily unavailable"}`
-- [ ] Controller tests use MockMvc. Service tests mock `RabbitTemplate`.
+- Controller tests use MockMvc. Service tests mock `RabbitTemplate`.
 
 **Reference:** `…/scan/ScanController.java`, `ScanRecord.java`, `ScanResponse.java`, `ScanType.java`,
 `ApiExceptionHandler.java`, `ScanService.submit`; tests `ScanControllerTest`, `ScanServiceTest`
@@ -150,10 +150,10 @@ scans that fail with 503.
 scan a second time.
 
 **Acceptance criteria:**
-- [ ] Accepted responses are kept by `clientId`. A repeat `clientId` returns the stored response and publishes nothing.
-- [ ] Concurrent duplicates are race-safe: store with `putIfAbsent` and return whichever response won
-- [ ] Rejected scans are not stored, so a resend is checked again (for example after a hold is lifted)
-- [ ] A failed publish (503) is not stored, so the resend publishes
+- Accepted responses are kept by `clientId`. A repeat `clientId` returns the stored response and publishes nothing.
+- Concurrent duplicates are race-safe: store with `putIfAbsent` and return whichever response won
+- Rejected scans are not stored, so a resend is checked again (for example after a hold is lifted)
+- A failed publish (503) is not stored, so the resend publishes
 
 **Reference:** `ScanService.submit` (the `accepted` map)
 
@@ -171,14 +171,14 @@ that's planned.
 so a slow or unreachable consumer must never block scanning. The consumer checks holds again when it processes the scan.
 
 **Acceptance criteria:**
-- [ ] `GET {app.consumer.base-url}/api/lots/{lotId}` maps the response to `LotState`:
+- `GET {app.consumer.base-url}/api/lots/{lotId}` maps the response to `LotState`:
       `currentStage`, `wipLocation`, `onHold`, `status`, `lastScan { clientId, userName, at }`
-- [ ] Connect and read timeouts are 2 seconds each
-- [ ] A 404 returns "no lot" (empty)
-- [ ] Any other error or timeout returns empty and logs a warning
+- Connect and read timeouts are 2 seconds each
+- A 404 returns "no lot" (empty)
+- Any other error or timeout returns empty and logs a warning
       ("Could not look up lot …; accepting scan without a hold check")
-- [ ] When the lookup is empty, every lot check (PROD-7 and PROD-8) is skipped
-- [ ] Tests use `MockRestServiceServer` to cover found, 404, 5xx and timeout
+- When the lookup is empty, every lot check (PROD-7 and PROD-8) is skipped
+- Tests use `MockRestServiceServer` to cover found, 404, 5xx and timeout
 
 **Reference:** `…/scan/LotClient.java`, `LotState.java`; test `LotClientTest`
 
@@ -192,14 +192,14 @@ so a slow or unreachable consumer must never block scanning. The consumer checks
 is published.
 
 **Acceptance criteria:**
-- [ ] A lot whose `status` is not null and not `active` is rejected with `errorCode` `LOT_<STATUS>` (uppercased, for
+- A lot whose `status` is not null and not `active` is rejected with `errorCode` `LOT_<STATUS>` (uppercased, for
       example `LOT_CANCELED`) and `errorMessage` "Lot {lotId} is {status}". A null status counts as active.
-- [ ] A lot with `onHold=true` is rejected with `LOT_ON_HOLD` ("Lot {lotId} is on hold") when the scan moves it
+- A lot with `onHold=true` is rejected with `LOT_ON_HOLD` ("Lot {lotId} is on hold") when the scan moves it
       out of its stage, meaning `destinationStage` ≠ the stage it is leaving. A scan within its stage is allowed.
-- [ ] The stage being left is the lot's recorded stage, or the scan's `currentStage` when the location doesn't match
+- The stage being left is the lot's recorded stage, or the scan's `currentStage` when the location doesn't match
       (see PROD-8)
-- [ ] Rejections return 200 with the error fields, aren't published and aren't stored (PROD-5)
-- [ ] Check order: status, then hold, then location mismatch (PROD-8), then route (PROD-11)
+- Rejections return 200 with the error fields, aren't published and aren't stored (PROD-5)
+- Check order: status, then hold, then location mismatch (PROD-8), then route (PROD-11)
 
 **Reference:** `ScanService.lotRejection`; `ScanServiceTest`
 
@@ -214,20 +214,20 @@ operator where the records have it and who logged it there. The operator can con
 resend the scan with `locationConfirmed: true` and an optional `correctionReason`, which corrects the record.
 
 **Acceptance criteria:**
-- [ ] A mismatch is when the recorded `currentStage` is not null, is not the scan's `currentStage`, and is not the
+- A mismatch is when the recorded `currentStage` is not null, is not the scan's `currentStage`, and is not the
       scan's `destinationStage`. A recorded stage equal to the destination means the same move was scanned twice,
       which is not a mismatch.
-- [ ] A mismatch that is not confirmed (no `locationConfirmed: true` and a blank `correctionReason`) is rejected with `LOT_LOCATION_MISMATCH` and a
+- A mismatch that is not confirmed (no `locationConfirmed: true` and a blank `correctionReason`) is rejected with `LOT_LOCATION_MISMATCH` and a
       `recorded { stage, wipLocation, scannedBy, scannedAt }` object. `scannedBy` and `scannedAt` come from
       `lastScan` and are left out when it is unknown.
-- [ ] Message wording uses stage descriptions from the catalog (or the id when there is none):
+- Message wording uses stage descriptions from the catalog (or the id when there is none):
   - Missed scan (the recorded stage's `next-stages` include the scan's stage):
     "Lot {lot} was never logged out of {recorded}{by}. Confirm it is here at {here} to correct the record."
   - Otherwise: "Records show lot {lot} at {recorded}{by}, not {here}. Confirm it is here to correct the record."
   - `{by}` = " (logged by {userName} at yyyy-MM-dd HH:mm)" in the server's time zone, or empty when there's no `lastScan`
-- [ ] A confirmed mismatch (`locationConfirmed: true`, or a non-blank `correctionReason` from older UIs) passes this check and is published with any reason (the status and hold
+- A confirmed mismatch (`locationConfirmed: true`, or a non-blank `correctionReason` from older UIs) passes this check and is published with any reason (the status and hold
       checks still apply)
-- [ ] With no catalog, the messages fall back to stage ids and always use the "Records show" wording
+- With no catalog, the messages fall back to stage ids and always use the "Records show" wording
 
 **Reference:** `ScanService.isMismatch`, `ScanService.mismatchRejection`, `ScanResponse.RecordedLocation`; `ScanServiceTest`
 
@@ -241,14 +241,14 @@ resend the scan with `locationConfirmed: true` and an optional `correctionReason
 through and keeps the last good copy on disk, so it's still available after a restart while the consumer is unreachable.
 
 **Acceptance criteria:**
-- [ ] `GET /api/lot-stages` returns the consumer's `GET /api/lot-stages` JSON unchanged, as `application/json`
-- [ ] Connect and read timeouts are 2 seconds each
-- [ ] Each successful fetch is saved to `app.lot-stages.cache-file` (default `./data/lot-stages.json`). The file is
+- `GET /api/lot-stages` returns the consumer's `GET /api/lot-stages` JSON unchanged, as `application/json`
+- Connect and read timeouts are 2 seconds each
+- Each successful fetch is saved to `app.lot-stages.cache-file` (default `./data/lot-stages.json`). The file is
       written to a temp file in the same directory and moved into place with `ATOMIC_MOVE`, and missing directories
       are created.
-- [ ] When the fetch fails, the endpoint serves the in-memory copy, then the disk copy, and returns 503 if neither exists
-- [ ] A failed save logs a warning and doesn't fail the request
-- [ ] Tests cover a fresh fetch, falling back to memory, falling back to disk after a restart, and 503
+- When the fetch fails, the endpoint serves the in-memory copy, then the disk copy, and returns 503 if neither exists
+- A failed save logs a warning and doesn't fail the request
+- Tests cover a fresh fetch, falling back to memory, falling back to disk after a restart, and 503
 
 **Reference:** `…/stage/LotStageClient.java`, `LotStageController.java`; tests `LotStageClientTest`, `LotStageControllerTest`
 
@@ -262,14 +262,14 @@ through and keeps the last good copy on disk, so it's still available after a re
 each wait on the consumer.
 
 **Acceptance criteria:**
-- [ ] Catalog JSON is a map of stage id to `Stage`:
+- Catalog JSON is a map of stage id to `Stage`:
       `description`, `next-stages` (list of stage ids), `wip-locations` (map of id to `{ description }`),
       `next-wip-locations` (map of destination stage id to a list of allowed WIP ids)
-- [ ] Unknown fields are ignored. Missing lists and maps become empty.
-- [ ] A parsed snapshot is reused for 60 seconds (injectable `Clock` for tests)
-- [ ] When the fetch or parse fails, the last snapshot is used. With no snapshot, the result is empty and route
+- Unknown fields are ignored. Missing lists and maps become empty.
+- A parsed snapshot is reused for 60 seconds (injectable `Clock` for tests)
+- When the fetch or parse fails, the last snapshot is used. With no snapshot, the result is empty and route
       validation is skipped.
-- [ ] Invalid JSON logs a warning and doesn't throw
+- Invalid JSON logs a warning and doesn't throw
 
 **Reference:** `…/stage/StageCatalog.java`; test `StageCatalogTest`
 
@@ -282,16 +282,16 @@ each wait on the consumer.
 **Description:** Reject moves the stage graph doesn't allow.
 
 **Acceptance criteria:**
-- [ ] Runs only when no lot check rejected the scan and a catalog is available
-- [ ] Always allowed: `destinationStage` = `currentStage`, or a `currentStage` that isn't in the catalog (the
+- Runs only when no lot check rejected the scan and a catalog is available
+- Always allowed: `destinationStage` = `currentStage`, or a `currentStage` that isn't in the catalog (the
       catalog may be older than the scan station's)
-- [ ] A `destinationStage` not in the current stage's `next-stages` is rejected with `INVALID_NEXT_STAGE`:
+- A `destinationStage` not in the current stage's `next-stages` is rejected with `INVALID_NEXT_STAGE`:
       "{to} is not a next stage of {from}"
-- [ ] When `destinationWipLocation` is set (trimmed), it is rejected with `WIP_LOCATION_NOT_ALLOWED` if it isn't
+- When `destinationWipLocation` is set (trimmed), it is rejected with `WIP_LOCATION_NOT_ALLOWED` if it isn't
       defined in the destination stage's `wip-locations`, or if the current stage's `next-wip-locations` has an
       entry for the destination that doesn't list it. Message: "Lots from {from} can't go to {wip} in {to}".
-- [ ] No `next-wip-locations` entry for the destination means any WIP location defined on that stage is allowed
-- [ ] Names in messages use descriptions, falling back to ids
+- No `next-wip-locations` entry for the destination means any WIP location defined on that stage is allowed
+- Names in messages use descriptions, falling back to ids
 
 **Reference:** `ScanService.routeRejection`; `ScanServiceTest`
 
@@ -304,9 +304,9 @@ each wait on the consumer.
 **Description:** In development the UI runs on `ng serve` (port 4200) and calls the producer across origins.
 
 **Acceptance criteria:**
-- [ ] `/api/**` allows the origins in `app.cors.allowed-origins` (comma-separated, default `http://localhost:4200`)
-- [ ] Allowed methods are `GET` and `POST`. Allowed headers are `Content-Type` and `Idempotency-Key`.
-- [ ] A preflight from the dev origin succeeds, and one from any other origin is refused
+- `/api/**` allows the origins in `app.cors.allowed-origins` (comma-separated, default `http://localhost:4200`)
+- Allowed methods are `GET` and `POST`. Allowed headers are `Content-Type` and `Idempotency-Key`.
+- A preflight from the dev origin succeeds, and one from any other origin is refused
 
 **Reference:** `…/scan/WebConfig.java`
 
@@ -320,14 +320,14 @@ each wait on the consumer.
 internet connection.
 
 **Acceptance criteria:**
-- [ ] `maven-resources-plugin` copies `${ui.dist}` (default `../orthanc-scan-ui/dist/orthanc-scan-ui/browser`, which
+- `maven-resources-plugin` copies `${ui.dist}` (default `../orthanc-scan-ui/dist/orthanc-scan-ui/browser`, which
       can be overridden with `-Dui.dist=`) to `static/` in the `prepare-package` phase
-- [ ] When the UI folder is missing, the build still succeeds and produces a jar without the UI
-- [ ] `/` serves `index.html`. `/scan-lot`, `/scan-lot/**` and `/admin` forward to `index.html`, so reloads and
+- When the UI folder is missing, the build still succeeds and produces a jar without the UI
+- `/` serves `index.html`. `/scan-lot`, `/scan-lot/**` and `/admin` forward to `index.html`, so reloads and
       bookmarks work.
-- [ ] `index.html` is sent with `Cache-Control: no-cache`. Hashed `/*.js` and `/*.css` are sent with
+- `index.html` is sent with `Cache-Control: no-cache`. Hashed `/*.js` and `/*.css` are sent with
       `max-age=31536000, public, immutable`.
-- [ ] `/api/**` is unaffected
+- `/api/**` is unaffected
 
 **Reference:** `…/web/UiConfig.java`, `pom.xml` (copy-ui execution)
 
@@ -342,18 +342,18 @@ internet connection.
 **Description:** A README that lets a new developer run the producer locally and lets ops deploy it in the plant.
 
 **Acceptance criteria:**
-- [ ] Configuration files: what goes in each, precedence, why they must not be renamed
-- [ ] The three local modes:
+- Configuration files: what goes in each, precedence, why they must not be renamed
+- The three local modes:
   1. Test RabbitMQ and the shared `orthanc.scans` queue, processed by the test consumer
   2. Test RabbitMQ with a personal queue, routing key, DLX and DLQ (`orthanc.scans.<name>`,
      `scan.created.<name>`, …), processed by a local consumer
   3. Everything local: `docker run -it --rm --name rabbitmq -p 5672:5672 -p 15672:15672 rabbitmq:4-management`
-- [ ] Explains that mode 2 needs a **different routing key**, not only a different queue name. Otherwise the
+- Explains that mode 2 needs a **different routing key**, not only a different queue name. Otherwise the
       personal queue receives copies of everyone's scans.
-- [ ] Explains that personal queues are durable and must be deleted by hand, and that queues created before the DLQ
+- Explains that personal queues are durable and must be deleted by hand, and that queues created before the DLQ
       change must be deleted once
-- [ ] Running tests
-- [ ] Plant deployment: a table of what happens offline (UI, lot stages, hold check, scans), build order (UI first,
+- Running tests
+- Plant deployment: a table of what happens offline (UI, lot stages, hold check, scans), build order (UI first,
       then `./mvnw package`), running the jar, setting `app.lot-stages.cache-file` to persistent disk, and the 503
       before the first successful catalog fetch
 
