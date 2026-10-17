@@ -83,23 +83,57 @@ Create `application-secrets.properties` (above) and `application-local.propertie
 spring.rabbitmq.host=<test-rabbitmq-host>
 app.scans.queue=orthanc.scans.<your-name>
 app.scans.routing-key=scan.created.<your-name>
-app.scans.dead-letter-exchange=orthanc.scans.dlx.<your-name>
 app.scans.dead-letter-queue=orthanc.scans.dlq.<your-name>
+app.scans.queue-expires=7d
 ```
 
 Leave `app.consumer.base-url` out so lot lookups go to your local consumer on port 3001. Create the same two
-files in orthanc-scan-consumer, with the **same** queue, routing key and dead-letter names (see its README). Run both apps with the
-`local` profile.
+files in orthanc-scan-consumer, with the **same** queue, routing key, dead-letter queue and expiry (see its
+README). Run both apps with the `local` profile.
 
 - **The routing key must be different from `scan.created`, not just the queue name.** The exchange delivers a
   message to every queue bound with its routing key. If your queue used `scan.created`, it would also receive
   copies of everyone's test scans, and the test consumer would still receive yours.
-- Whichever app starts first creates your queue and binds it to `orthanc.scans`, so your RabbitMQ user needs
-  configure, write and read permission on it.
-- The queues are durable, so they stay on the test broker after you stop. Delete your queue, dead-letter queue
-  and dead-letter exchange in the RabbitMQ management UI when you no longer need them.
-- The scans queue has dead-letter arguments, and RabbitMQ won't redeclare an existing queue with different
-  ones. A queue created by an older version must be deleted once (see the consumer's README, "Failed scans").
+- Your dead-letter queue uses the shared dead-letter exchange `orthanc.scans.dlx`. Failed scans are routed by
+  dead-letter queue name, so you only get your own.
+- Whichever app starts first creates your two queues and binds them to `orthanc.scans` and
+  `orthanc.scans.dlx`. Your RabbitMQ user needs configure, write and read permission on both queues, and write
+  and read permission on both exchanges.
+- RabbitMQ won't redeclare an existing queue with different arguments (dead-letter settings or expiry). If the
+  apps fail to start with `PRECONDITION_FAILED - inequivalent arg`, check both apps have the same settings, then
+  delete the queue once (below). See also the consumer's README, "Failed scans".
+
+#### Removing your queues
+
+With `app.scans.queue-expires` set, RabbitMQ deletes your queues by itself: each one is deleted, with any
+messages in it, once it has gone 7 days with no consumer and neither app starting. Starting either app
+recreates them and restarts the clock. If you leave the apps running for more than 7 days without opening the
+consumer's `/dead-letters` page, your dead-letter queue can expire while they run. Restart either app to
+recreate it.
+
+To delete them now, for example to start clean, stop both apps and delete `orthanc.scans.<your-name>` and
+`orthanc.scans.dlq.<your-name>`. Any messages in them are lost. Either:
+
+- In the RabbitMQ management UI (`http://<test-rabbitmq-host>:15672`), open **Queues and Streams**, click the
+  queue, then at the bottom of the page open **Delete** and click **Delete Queue**.
+- Or with the HTTP API (`%2F` is the default virtual host `/`):
+
+  ```bash
+  curl -u <your-dev-user>:<your-dev-password> -X DELETE \
+    "http://<test-rabbitmq-host>:15672/api/queues/%2F/orthanc.scans.<your-name>"
+  curl -u <your-dev-user>:<your-dev-password> -X DELETE \
+    "http://<test-rabbitmq-host>:15672/api/queues/%2F/orthanc.scans.dlq.<your-name>"
+  ```
+
+If you used mode 2 before queues could expire, your queues were created without an expiry, and the apps
+fail to start with `PRECONDITION_FAILED - inequivalent arg 'x-expires'`. Delete both queues as above. Also
+delete your old dead-letter exchange `orthanc.scans.dlx.<your-name>`, which is no longer used: open
+**Exchanges**, click it, then **Delete this exchange**, or:
+
+```bash
+curl -u <your-dev-user>:<your-dev-password> -X DELETE \
+  "http://<test-rabbitmq-host>:15672/api/exchanges/%2F/orthanc.scans.dlx.<your-name>"
+```
 
 ### Mode 3: everything local
 

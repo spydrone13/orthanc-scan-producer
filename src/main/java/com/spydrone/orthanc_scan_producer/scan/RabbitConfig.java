@@ -1,5 +1,7 @@
 package com.spydrone.orthanc_scan_producer.scan;
 
+import java.time.Duration;
+
 import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
 import org.springframework.amqp.core.DirectExchange;
@@ -20,14 +22,15 @@ public class RabbitConfig {
 	}
 
 	/**
-	 * Must match the consumer's declaration, dead-letter arguments included, or whichever app starts
-	 * second fails to declare it.
+	 * Must match the consumer's declaration, dead-letter and expiry arguments included, or whichever app
+	 * starts second fails to declare it.
 	 */
 	@Bean
 	Queue scansQueue(@Value("${app.scans.queue}") String name,
 			@Value("${app.scans.dead-letter-exchange}") String deadLetterExchange,
-			@Value("${app.scans.dead-letter-queue}") String deadLetterQueue) {
-		return QueueBuilder.durable(name)
+			@Value("${app.scans.dead-letter-queue}") String deadLetterQueue,
+			@Value("${app.scans.queue-expires:#{null}}") Duration expires) {
+		return durable(name, expires)
 				.deadLetterExchange(deadLetterExchange)
 				.deadLetterRoutingKey(deadLetterQueue)
 				.build();
@@ -45,8 +48,9 @@ public class RabbitConfig {
 	}
 
 	@Bean
-	Queue scansDeadLetterQueue(@Value("${app.scans.dead-letter-queue}") String name) {
-		return QueueBuilder.durable(name).build();
+	Queue scansDeadLetterQueue(@Value("${app.scans.dead-letter-queue}") String name,
+			@Value("${app.scans.queue-expires:#{null}}") Duration expires) {
+		return durable(name, expires).build();
 	}
 
 	@Bean
@@ -57,5 +61,11 @@ public class RabbitConfig {
 	@Bean
 	MessageConverter jsonMessageConverter() {
 		return new JacksonJsonMessageConverter();
+	}
+
+	/** Developer queues (README, mode 2) set app.scans.queue-expires so RabbitMQ deletes them once unused. */
+	private static QueueBuilder durable(String name, Duration expires) {
+		QueueBuilder queue = QueueBuilder.durable(name);
+		return expires != null ? queue.expires(Math.toIntExact(expires.toMillis())) : queue;
 	}
 }

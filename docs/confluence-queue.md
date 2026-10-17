@@ -33,6 +33,8 @@ The queues are **classic queues, not quorum queues**. They are durable and messa
 survive a broker restart, but they are not replicated across a cluster.
 
 All names are configurable (`app.scans.*` properties in each app). The values above are the defaults.
+Production queues never expire: `app.scans.queue-expires` is left unset, so they have no `x-expires` argument.
+Only developer queues set it (see "Developer queues").
 
 ### Who declares what
 
@@ -121,9 +123,24 @@ What to watch:
 
 ## Developer queues
 
-Developers can run against the test broker with their own queue (see the producer README, "Mode 2"). Two rules:
+Developers can run against the test broker with their own queues (see the producer README, "Mode 2"):
+`orthanc.scans.<name>` bound to `orthanc.scans` with routing key `scan.created.<name>`, and
+`orthanc.scans.dlq.<name>` bound to the shared `orthanc.scans.dlx`.
 
 - Use a **different routing key** as well as a different queue name. The exchange is direct, so a queue bound
   with `scan.created` would receive copies of everyone's scans, and the test consumer would still receive yours.
-- The queues are durable and stay on the broker. Delete your queue, dead-letter queue and dead-letter exchange
-  when you're done.
+- Dead-lettered scans are routed by dead-letter queue name, so a developer's dead-letter queue only receives
+  their own failed scans.
+- Both apps set `app.scans.queue-expires=7d`, which declares the queues with `x-expires`. RabbitMQ deletes each
+  queue, and any messages in it, after 7 days with no consumer and no app starting. Starting either app
+  recreates the queues.
+
+To remove developer queues sooner, stop both apps and delete the queues in the management UI (**Queues and
+Streams** → the queue → **Delete** → **Delete Queue**) or with the HTTP API:
+
+    curl -u <user>:<password> -X DELETE "http://<rabbitmq-host>:15672/api/queues/%2F/orthanc.scans.<name>"
+    curl -u <user>:<password> -X DELETE "http://<rabbitmq-host>:15672/api/queues/%2F/orthanc.scans.dlq.<name>"
+
+Queues created before expiry was added must be deleted once, together with the old per-developer exchange
+`orthanc.scans.dlx.<name>` (**Exchanges** → the exchange → **Delete this exchange**, or
+`DELETE /api/exchanges/%2F/orthanc.scans.dlx.<name>`).
