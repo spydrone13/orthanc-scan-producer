@@ -133,6 +133,14 @@ The management UI is at http://localhost:15672 (guest / guest).
 
 The tests don't need RabbitMQ, the consumer, or either of the files above.
 
+### Code coverage
+
+`./mvnw test` also writes a coverage report. Open `target/site/jacoco/index.html` for the per-class HTML report.
+A `jacoco.xml` file is also written there for editor plugins and CI tools.
+
+`./mvnw verify` (and anything after it, like `install`) also checks coverage, and fails if line or branch
+coverage drops below the minimums set on the `jacoco-maven-plugin` in `pom.xml`.
+
 ## Deploying in the plant
 
 The producer and RabbitMQ run on the plant network, and the consumer runs off-site. Browsers only talk to the
