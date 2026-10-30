@@ -10,19 +10,33 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.web.servlet.MockMvc;
 
-/** The circuits health group is exposed with details, without needing RabbitMQ or the consumer. */
-@SpringBootTest
+/**
+ * The health endpoints, with RabbitMQ pointed at a closed port so it's down whether or not a broker runs
+ * locally. Neither RabbitMQ nor the consumer is needed.
+ */
+@SpringBootTest(properties = "spring.rabbitmq.port=1")
 @AutoConfigureMockMvc
-class CircuitsHealthEndpointTest {
+class HealthEndpointTest {
 
 	@Autowired
 	private MockMvc mvc;
 
 	@Test
-	void showsEachCircuitsState() throws Exception {
+	void healthShowsRabbitMqAndTheCircuits() throws Exception {
+		mvc.perform(get("/actuator/health"))
+				.andExpect(status().isServiceUnavailable())
+				.andExpect(jsonPath("$.status").value("DOWN"))
+				.andExpect(jsonPath("$.components.rabbit.status").value("DOWN"))
+				.andExpect(jsonPath("$.components.rabbit.details.error").exists())
+				.andExpect(jsonPath("$.components.consumerCircuits.details.lot-lookup.state").value("CLOSED"));
+	}
+
+	@Test
+	void circuitsGroupShowsOnlyTheCircuitsAndStaysUp() throws Exception {
 		mvc.perform(get("/actuator/health/circuits"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("UP"))
+				.andExpect(jsonPath("$.components.rabbit").doesNotExist())
 				.andExpect(jsonPath("$.components.consumerCircuits.details.lot-lookup.state").value("CLOSED"))
 				.andExpect(jsonPath("$.components.consumerCircuits.details.lot-stages.state").value("CLOSED"));
 	}

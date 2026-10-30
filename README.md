@@ -198,7 +198,27 @@ The first call after the 30 s asks the consumer again, and calls resume once it 
 state is logged at WARN, for example `Circuit lot-stages CLOSED -> OPEN`. Both breakers share the
 `app.consumer.circuit-breaker.*` properties in `application.properties`.
 
-### Checking the circuit breakers
+### Health checks
+
+```bash
+curl http://<plant-host>:3000/actuator/health
+```
+
+This shows every component with its details. It is `DOWN` (HTTP 503) when RabbitMQ is unreachable, since
+scans can't be recorded then. Trimmed output, with the broker down:
+
+```json
+{"status":"DOWN","components":{
+  "rabbit":{"status":"DOWN","details":{"error":"org.springframework.amqp.AmqpConnectException: java.net.ConnectException: Connection refused"}},
+  "consumerCircuits":{"status":"UP","details":{"lot-lookup":{"state":"CLOSED",…},"lot-stages":{"state":"CLOSED",…}}},
+  "diskSpace":{"status":"UP","details":{"total":…,"free":…,"threshold":10485760,"path":"…","exists":true}},
+  "ping":{"status":"UP"},"livenessState":{"status":"UP"},"readinessState":{"status":"UP"},"ssl":{"status":"UP",…}}}
+```
+
+When the broker is up, `rabbit` shows `"status":"UP"` and the broker's `"version"`. The disk space details include
+the working directory's path. Only the health endpoint is exposed.
+
+For the circuit breakers alone:
 
 ```bash
 curl http://<plant-host>:3000/actuator/health/circuits
@@ -219,8 +239,8 @@ curl http://<plant-host>:3000/actuator/health/circuits
 | `notPermittedCalls` | Calls skipped because the circuit was open, since startup.                               |
 
 The status stays `UP` while a circuit is open: the producer is falling back as designed, so a monitoring
-probe shouldn't treat it as down. Alert on `state` instead. The overall `/actuator/health` also includes
-RabbitMQ and disk space, and is `DOWN` when RabbitMQ is unreachable. Only the health endpoint is exposed.
+probe shouldn't treat it as down. Alert on `state` instead. This view stays `UP` when RabbitMQ is down; use
+`/actuator/health` for that.
 
 ### Building
 

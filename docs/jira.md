@@ -406,12 +406,16 @@ logs.
 - A `consumerCircuits` health indicator lists every circuit breaker by name with `state`, `failureRate`,
       `bufferedCalls`, `failedCalls` and `notPermittedCalls`
 - It is always `UP`: an open circuit is the designed fallback, not a failure
-- `GET /actuator/health/circuits` (health group `circuits`, details always shown) returns it without needing
-      RabbitMQ or the consumer
-- README explains each field and that the overall `/actuator/health` also includes RabbitMQ
+- `GET /actuator/health/circuits` (health group `circuits`) returns only it, `UP`, without needing RabbitMQ or
+      the consumer
+- `GET /actuator/health` shows every component's details (`show-details=always`), including RabbitMQ's
+      `version`, or its `error` and `DOWN`/503 when the broker is unreachable
+- README explains each field, the RabbitMQ output, and that disk space details include a path
+- The endpoint tests point RabbitMQ at a closed port, so they give the same result whether or not a broker
+      runs locally
 
 **Reference:** `…/ConsumerCircuitsHealthIndicator.java`, `application.properties` (`management.*`); tests
-`ConsumerCircuitsHealthIndicatorTest`, `CircuitsHealthEndpointTest`
+`ConsumerCircuitsHealthIndicatorTest`, `HealthEndpointTest`
 
 ---
 
