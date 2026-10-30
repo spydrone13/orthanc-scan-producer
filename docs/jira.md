@@ -394,6 +394,27 @@ tests `ScanRejectionServiceTest`, `LotStageClientTest`, `ConsumerCircuitBreakerC
 
 ---
 
+### PROD-16: Circuit breaker status endpoint
+
+**Type:** Story  **Epic:** Scan Producer  **Points:** 2  **Depends on:** PROD-15
+
+**Description:** Ops need to see at any moment whether the producer is skipping the consumer, without searching the
+logs.
+
+**Acceptance criteria:**
+- `spring-boot-starter-actuator` added. Only the `health` endpoint is exposed over the web (the default).
+- A `consumerCircuits` health indicator lists every circuit breaker by name with `state`, `failureRate`,
+      `bufferedCalls`, `failedCalls` and `notPermittedCalls`
+- It is always `UP`: an open circuit is the designed fallback, not a failure
+- `GET /actuator/health/circuits` (health group `circuits`, details always shown) returns it without needing
+      RabbitMQ or the consumer
+- README explains each field and that the overall `/actuator/health` also includes RabbitMQ
+
+**Reference:** `…/ConsumerCircuitsHealthIndicator.java`, `application.properties` (`management.*`); tests
+`ConsumerCircuitsHealthIndicatorTest`, `CircuitsHealthEndpointTest`
+
+---
+
 ## Dependencies
 
 | Ticket  | Depends on        |
@@ -413,6 +434,7 @@ tests `ScanRejectionServiceTest`, `LotStageClientTest`, `ConsumerCircuitBreakerC
 | PROD-13 | PROD-1            |
 | PROD-14 | PROD-1 to PROD-13 |
 | PROD-15 | PROD-6, 7, 9      |
+| PROD-16 | PROD-15           |
 
 ## Suggested sprints
 
@@ -421,6 +443,6 @@ tests `ScanRejectionServiceTest`, `LotStageClientTest`, `ConsumerCircuitBreakerC
 | 1      | PROD-1, 2, 3, 4, 5, 12                    | 14     | Scans published to RabbitMQ from the dev UI         |
 | 2      | PROD-6, 7, 9, 10                          | 11     | Hold and status checks; catalog available offline   |
 | 3      | PROD-8, 11, 13, 14                        | 13     | Full validation, UI bundled, ready for the plant    |
-| 4      | PROD-15                                   | 5      | Scans and catalog stay fast during an outage        |
+| 4      | PROD-15, 16                               | 7      | Fast during an outage, with circuit status visible  |
 
-Total: 43 points.
+Total: 45 points.

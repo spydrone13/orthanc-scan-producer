@@ -195,8 +195,32 @@ for 30 s:
 - With `lot-stages` open, the cached catalog is served immediately.
 
 The first call after the 30 s asks the consumer again, and calls resume once it answers. Each change of
-state is logged at WARN as `Circuit lot-lookup …` or `Circuit lot-stages …`. Both breakers share the
+state is logged at WARN, for example `Circuit lot-stages CLOSED -> OPEN`. Both breakers share the
 `app.consumer.circuit-breaker.*` properties in `application.properties`.
+
+### Checking the circuit breakers
+
+```bash
+curl http://<plant-host>:3000/actuator/health/circuits
+```
+
+```json
+{"status":"UP","components":{"consumerCircuits":{"status":"UP","details":{
+  "lot-lookup":{"state":"CLOSED","failureRate":-1.0,"bufferedCalls":0,"failedCalls":0,"notPermittedCalls":0},
+  "lot-stages":{"state":"OPEN","failureRate":100.0,"bufferedCalls":5,"failedCalls":5,"notPermittedCalls":2}}}}}
+```
+
+| Field               | Meaning                                                                                  |
+|---------------------|------------------------------------------------------------------------------------------|
+| `state`             | `CLOSED`: calling the consumer. `OPEN`: not calling it, using the fallback. `HALF_OPEN`: probing it. |
+| `failureRate`       | Percent of the last calls that failed; `-1` until there have been at least 5 calls.      |
+| `bufferedCalls`     | Calls counted in the window (up to 10).                                                  |
+| `failedCalls`       | Of those, how many failed.                                                               |
+| `notPermittedCalls` | Calls skipped because the circuit was open, since startup.                               |
+
+The status stays `UP` while a circuit is open: the producer is falling back as designed, so a monitoring
+probe shouldn't treat it as down. Alert on `state` instead. The overall `/actuator/health` also includes
+RabbitMQ and disk space, and is `DOWN` when RabbitMQ is unreachable. Only the health endpoint is exposed.
 
 ### Building
 

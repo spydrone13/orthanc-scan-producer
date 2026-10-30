@@ -57,8 +57,8 @@ public class ConsumerCircuitBreakerConfig {
 				.ignoreExceptions(HttpClientErrorException.class)
 				.build());
 		breaker.getEventPublisher().onStateTransition(event -> log.warn(
-				"Circuit {} {}; while open, the consumer isn't called and the fallback is used",
-				name, event.getStateTransition()));
+				"Circuit {} {} -> {}; while open, the consumer isn't called and the fallback is used",
+				name, event.getStateTransition().getFromState(), event.getStateTransition().getToState()));
 		return breaker;
 	}
 }
