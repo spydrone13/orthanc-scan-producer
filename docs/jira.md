@@ -201,7 +201,7 @@ is published.
 - Rejections return 200 with the error fields, aren't published and aren't stored (PROD-5)
 - Check order: status, then hold, then location mismatch (PROD-8), then route (PROD-11)
 
-**Reference:** `ScanService.lotRejection`; `ScanServiceTest`
+**Reference:** `…/scan/ScanRejectionService.java` (`lotRejection`); `ScanRejectionServiceTest`
 
 ---
 
@@ -229,7 +229,7 @@ resend the scan with `locationConfirmed: true` and an optional `correctionReason
       checks still apply)
 - With no catalog, the messages fall back to stage ids and always use the "Records show" wording
 
-**Reference:** `ScanService.isMismatch`, `ScanService.mismatchRejection`, `ScanResponse.RecordedLocation`; `ScanServiceTest`
+**Reference:** `ScanRejectionService.isMismatch`, `ScanRejectionService.mismatchRejection`, `ScanResponse.RecordedLocation`; `ScanRejectionServiceTest`
 
 ---
 
@@ -293,7 +293,7 @@ each wait on the consumer.
 - No `next-wip-locations` entry for the destination means any WIP location defined on that stage is allowed
 - Names in messages use descriptions, falling back to ids
 
-**Reference:** `ScanService.routeRejection`; `ScanServiceTest`
+**Reference:** `ScanRejectionService.routeRejection`; `ScanRejectionServiceTest`
 
 ---
 
