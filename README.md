@@ -183,14 +183,19 @@ producer, so scanning keeps working when the plant loses its internet connection
 | Piece          | When the consumer can't be reached                                                         |
 |----------------|--------------------------------------------------------------------------------------------|
 | UI             | Served from this jar.                                                                      |
-| Lot stages     | Served from the last copy fetched, saved at `app.lot-stages.cache-file`.                   |
+| Lot stages     | Served from the last copy fetched, saved at `app.lot-stages.cache-file`; right away while the circuit breaker is open (below). |
 | Hold check     | Skipped after a 2 s timeout, or right away while the circuit breaker is open (below); the consumer checks holds again when it processes the scan. |
 | Scans          | Published to the plant's RabbitMQ and kept there until the consumer reconnects.            |
 
-Without the circuit breaker, each scan would wait the full 2 s for the consumer during an outage. Once half
-of the last 10 lot lookups have failed (from at least 5 lookups), the producer stops asking for 30 s and scans
-skip the lot checks immediately. The first scan after that asks again, and lookups resume once the consumer
-answers. Each change of state is logged at WARN as `Lot lookup circuit …`. Tune it with the
+Without circuit breakers, each scan and each catalog request would wait the full 2 s for the consumer during
+an outage. Lot lookups and catalog fetches each have their own breaker, `lot-lookup` and `lot-stages`. Once
+half of a breaker's last 10 calls have failed (from at least 5 calls), the producer stops making that call
+for 30 s:
+- With `lot-lookup` open, scans skip the lot checks immediately.
+- With `lot-stages` open, the cached catalog is served immediately.
+
+The first call after the 30 s asks the consumer again, and calls resume once it answers. Each change of
+state is logged at WARN as `Circuit lot-lookup …` or `Circuit lot-stages …`. Both breakers share the
 `app.consumer.circuit-breaker.*` properties in `application.properties`.
 
 ### Building

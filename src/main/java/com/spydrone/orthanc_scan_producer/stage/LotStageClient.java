@@ -11,15 +11,20 @@ import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+
 /**
  * Fetches the lot-stage catalog from orthanc-scan-consumer and keeps the last good copy on disk, so the
- * plant can keep scanning while the off-site consumer is unreachable.
+ * plant can keep scanning while the off-site consumer is unreachable. After repeated failures, the
+ * circuit breaker skips the fetch for a while and the last copy is served without waiting on the consumer.
  */
 @Component
 public class LotStageClient {
@@ -29,17 +34,20 @@ public class LotStageClient {
 
 	private final RestClient restClient;
 	private final Path cacheFile;
+	private final CircuitBreaker circuitBreaker;
 	private volatile String cached;
 
 	@Autowired
 	public LotStageClient(@Value("${app.consumer.base-url}") String baseUrl,
-			@Value("${app.lot-stages.cache-file}") Path cacheFile) {
-		this(RestClient.builder().baseUrl(baseUrl).requestFactory(requestFactory()), cacheFile);
+			@Value("${app.lot-stages.cache-file}") Path cacheFile,
+			@Qualifier("lotStagesCircuitBreaker") CircuitBreaker circuitBreaker) {
+		this(RestClient.builder().baseUrl(baseUrl).requestFactory(requestFactory()), cacheFile, circuitBreaker);
 	}
 
-	LotStageClient(RestClient.Builder builder, Path cacheFile) {
+	LotStageClient(RestClient.Builder builder, Path cacheFile, CircuitBreaker circuitBreaker) {
 		this.restClient = builder.build();
 		this.cacheFile = cacheFile;
+		this.circuitBreaker = circuitBreaker;
 	}
 
 	private static SimpleClientHttpRequestFactory requestFactory() {
@@ -52,12 +60,16 @@ public class LotStageClient {
 	/** The consumer's catalog as JSON, else the last one it returned, else empty. */
 	public Optional<String> stages() {
 		try {
-			String json = restClient.get().uri("/api/lot-stages").retrieve().body(String.class);
+			String json = circuitBreaker.executeSupplier(
+					() -> restClient.get().uri("/api/lot-stages").retrieve().body(String.class));
 			if (json != null) {
 				cached = json;
 				save(json);
 				return Optional.of(json);
 			}
+		}
+		catch (CallNotPermittedException e) {
+			// Circuit open: serve the cached copy without asking.
 		}
 		catch (RestClientException e) {
 			log.warn("Could not fetch lot stages; serving the cached copy: {}", e.getMessage());

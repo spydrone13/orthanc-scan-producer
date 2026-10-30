@@ -361,18 +361,21 @@ internet connection.
 
 ---
 
-### PROD-15: Circuit breaker on lot lookups
+### PROD-15: Circuit breakers on consumer calls
 
-**Type:** Story  **Epic:** Scan Producer  **Points:** 3  **Depends on:** PROD-6, PROD-7
+**Type:** Story  **Epic:** Scan Producer  **Points:** 5  **Depends on:** PROD-6, PROD-7, PROD-9
 
-**Description:** While the consumer is down, every scan waits for the 2-second lookup timeout before failing open.
-A circuit breaker stops asking the consumer after repeated failures, so scans fail open right away, and probes
-again after a cool-down.
+**Description:** While the consumer is down, every scan waits for the 2-second lookup timeout before failing open,
+and every catalog request waits 2 seconds before the cached copy is served. Circuit breakers stop calling the
+consumer after repeated failures, so callers fall back right away, and probe again after a cool-down.
 
 **Acceptance criteria:**
-- Resilience4j `resilience4j-circuitbreaker` (core module, no Spring starter) wraps `LotClient.find` in
-      `ScanRejectionService`
-- Settings come from `app.consumer.circuit-breaker.*`, with these defaults: `failure-rate-threshold=50`,
+- Resilience4j `resilience4j-circuitbreaker` (core module, no Spring starter), with one breaker per endpoint:
+  - `lot-lookup` wraps `LotClient.find` in `ScanRejectionService`
+  - `lot-stages` wraps the fetch in `LotStageClient.stages()`
+- While `lot-stages` is open, the in-memory or disk copy is served without calling the consumer (or 503 if
+      there is none)
+- Both breakers share settings from `app.consumer.circuit-breaker.*`, with these defaults: `failure-rate-threshold=50`,
       `sliding-window-size=10` (count-based), `minimum-number-of-calls=5`, `wait-duration-in-open-state=30s`,
       `permitted-calls-in-half-open-state=2`
 - `RestClientException`s (unreachable, timeouts, 5xx) count as failures. 4xx (`HttpClientErrorException`) are
@@ -381,13 +384,13 @@ again after a cool-down.
       (PROD-11) still runs
 - After the wait, the next scan probes the consumer. If enough probes succeed, the circuit closes and the lot
       checks apply again.
-- Each state change is logged at WARN. Failed lookups still log their own warning; calls refused by the open
-      circuit don't.
-- Tests cover failing open on an error, opening and no further calls, 4xx not opening the circuit, half-open
-      recovery, and the bean built from properties
+- Each state change is logged at WARN with the breaker's name. Failed calls still log their own warning; calls
+      refused by an open circuit don't.
+- Tests for each breaker cover the fallback on an error, opening with no further calls, 4xx not opening the
+      circuit, and half-open recovery. Tests also cover both beans built from properties.
 
-**Reference:** `…/scan/LotLookupConfig.java`, `ScanRejectionService.findLot`; tests `ScanRejectionServiceTest`,
-`LotLookupConfigTest`
+**Reference:** `…/ConsumerCircuitBreakerConfig.java`, `ScanRejectionService.findLot`, `LotStageClient.stages`;
+tests `ScanRejectionServiceTest`, `LotStageClientTest`, `ConsumerCircuitBreakerConfigTest`
 
 ---
 
@@ -409,7 +412,7 @@ again after a cool-down.
 | PROD-12 | PROD-1            |
 | PROD-13 | PROD-1            |
 | PROD-14 | PROD-1 to PROD-13 |
-| PROD-15 | PROD-6, PROD-7    |
+| PROD-15 | PROD-6, 7, 9      |
 
 ## Suggested sprints
 
@@ -418,6 +421,6 @@ again after a cool-down.
 | 1      | PROD-1, 2, 3, 4, 5, 12                    | 14     | Scans published to RabbitMQ from the dev UI         |
 | 2      | PROD-6, 7, 9, 10                          | 11     | Hold and status checks; catalog available offline   |
 | 3      | PROD-8, 11, 13, 14                        | 13     | Full validation, UI bundled, ready for the plant    |
-| 4      | PROD-15                                   | 3      | Scans stay fast during a consumer outage            |
+| 4      | PROD-15                                   | 5      | Scans and catalog stay fast during an outage        |
 
-Total: 41 points.
+Total: 43 points.

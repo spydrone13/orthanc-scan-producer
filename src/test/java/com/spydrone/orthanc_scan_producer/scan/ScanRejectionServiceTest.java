@@ -17,6 +17,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.ResourceAccessException;
 
+import com.spydrone.orthanc_scan_producer.ConsumerCircuitBreakerConfig;
 import com.spydrone.orthanc_scan_producer.stage.StageCatalog;
 import com.spydrone.orthanc_scan_producer.stage.StageCatalog.Stage;
 import com.spydrone.orthanc_scan_producer.stage.StageCatalog.WipLocation;
@@ -28,8 +29,8 @@ class ScanRejectionServiceTest {
 	private final LotClient lotClient = mock(LotClient.class);
 	private final StageCatalog stageCatalog = mock(StageCatalog.class);
 	/** Opens after 2 lookups with at least one failure; lets 1 probe through when half-open. */
-	private final CircuitBreaker breaker =
-			new LotLookupConfig().lotLookupCircuitBreaker(50, 2, 2, Duration.ofMinutes(1), 1);
+	private final CircuitBreaker breaker = ConsumerCircuitBreakerConfig.breaker("test",
+			new ConsumerCircuitBreakerConfig.Settings(50, 2, 2, Duration.ofMinutes(1), 1));
 	private final ScanRejectionService rejections = new ScanRejectionService(lotClient, stageCatalog, breaker);
 	private final ScanRecord record =
 			new ScanRecord("abc", "u", "S1", "L1", "S2", "W1", ScanType.TRANSITIONAL, "", null, null);

@@ -9,9 +9,11 @@ import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientException;
 
+import com.spydrone.orthanc_scan_producer.ConsumerCircuitBreakerConfig;
 import com.spydrone.orthanc_scan_producer.scan.ScanResponse.RecordedLocation;
 import com.spydrone.orthanc_scan_producer.stage.StageCatalog;
 import com.spydrone.orthanc_scan_producer.stage.StageCatalog.Stage;
@@ -38,7 +40,7 @@ public class ScanRejectionService {
 	private final CircuitBreaker lotLookupCircuitBreaker;
 
 	public ScanRejectionService(LotClient lotClient, StageCatalog stageCatalog,
-			CircuitBreaker lotLookupCircuitBreaker) {
+			@Qualifier("lotLookupCircuitBreaker") CircuitBreaker lotLookupCircuitBreaker) {
 		this.lotClient = lotClient;
 		this.stageCatalog = stageCatalog;
 		this.lotLookupCircuitBreaker = lotLookupCircuitBreaker;
@@ -54,7 +56,7 @@ public class ScanRejectionService {
 	 * <li>the destination isn't a next stage of the scan's stage, or its WIP location isn't allowed there
 	 * </ol>
 	 * The lot checks are skipped if the consumer can't be asked, or has failed repeatedly of late (see
-	 * {@link LotLookupConfig}), and the route check if no stage catalog has been fetched; the consumer then
+	 * {@link ConsumerCircuitBreakerConfig}), and the route check if no stage catalog has been fetched; the consumer then
 	 * flags what slips through.
 	 */
 	public Optional<ScanResponse> rejection(ScanRecord record) {
