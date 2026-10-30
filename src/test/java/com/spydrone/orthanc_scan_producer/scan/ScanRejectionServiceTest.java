@@ -3,23 +3,34 @@ package com.spydrone.orthanc_scan_producer.scan;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.ResourceAccessException;
 
 import com.spydrone.orthanc_scan_producer.stage.StageCatalog;
 import com.spydrone.orthanc_scan_producer.stage.StageCatalog.Stage;
 import com.spydrone.orthanc_scan_producer.stage.StageCatalog.WipLocation;
 
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+
 class ScanRejectionServiceTest {
 
 	private final LotClient lotClient = mock(LotClient.class);
 	private final StageCatalog stageCatalog = mock(StageCatalog.class);
-	private final ScanRejectionService rejections = new ScanRejectionService(lotClient, stageCatalog);
+	/** Opens after 2 lookups with at least one failure; lets 1 probe through when half-open. */
+	private final CircuitBreaker breaker =
+			new LotLookupConfig().lotLookupCircuitBreaker(50, 2, 2, Duration.ofMinutes(1), 1);
+	private final ScanRejectionService rejections = new ScanRejectionService(lotClient, stageCatalog, breaker);
 	private final ScanRecord record =
 			new ScanRecord("abc", "u", "S1", "L1", "S2", "W1", ScanType.TRANSITIONAL, "", null, null);
 
@@ -71,6 +82,55 @@ class ScanRejectionServiceTest {
 		ScanRecord other = new ScanRecord("def", "u", "S1", "L2", "S2", null, ScanType.TRANSITIONAL, "", null, null);
 		given(lotClient.find("L2")).willReturn(Optional.of(new LotState("S1", false, "active")));
 		assertThat(errorCode(other)).isNull();
+	}
+
+	@Test
+	void consumerErrorSkipsTheLotChecksButNotTheRouteCheck() {
+		given(stageCatalog.stages()).willReturn(Optional.of(STAGES));
+		given(lotClient.find("L1")).willThrow(new ResourceAccessException("timed out"));
+
+		assertThat(errorCode(record)).isNull();
+		assertThat(errorCode(scan("S1", "S3", null, null))).isEqualTo("INVALID_NEXT_STAGE");
+	}
+
+	@Test
+	void repeatedFailuresOpenTheCircuitAndStopAskingTheConsumer() {
+		given(lotClient.find("L1")).willThrow(new ResourceAccessException("timed out"));
+
+		for (int i = 0; i < 4; i++) {
+			assertThat(errorCode(record)).isNull();
+		}
+
+		assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+		verify(lotClient, times(2)).find("L1");
+	}
+
+	@Test
+	void clientErrorsDontOpenTheCircuit() {
+		given(lotClient.find("L1")).willThrow(new HttpClientErrorException(HttpStatus.BAD_REQUEST));
+
+		for (int i = 0; i < 3; i++) {
+			assertThat(errorCode(record)).isNull();
+		}
+
+		assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
+		verify(lotClient, times(3)).find("L1");
+	}
+
+	@Test
+	void circuitClosesAgainOnceTheConsumerAnswers() {
+		given(lotClient.find("L1"))
+				.willThrow(new ResourceAccessException("timed out"))
+				.willThrow(new ResourceAccessException("timed out"))
+				.willReturn(Optional.of(new LotState("S1", true, "active")));
+		errorCode(record);
+		errorCode(record);
+		assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+
+		breaker.transitionToHalfOpenState();
+
+		assertThat(errorCode(record)).isEqualTo("LOT_ON_HOLD");
+		assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
 	}
 
 	@Test

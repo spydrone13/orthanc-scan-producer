@@ -184,8 +184,14 @@ producer, so scanning keeps working when the plant loses its internet connection
 |----------------|--------------------------------------------------------------------------------------------|
 | UI             | Served from this jar.                                                                      |
 | Lot stages     | Served from the last copy fetched, saved at `app.lot-stages.cache-file`.                   |
-| Hold check     | Skipped after a 2 s timeout; the consumer checks holds again when it processes the scan.  |
+| Hold check     | Skipped after a 2 s timeout, or right away while the circuit breaker is open (below); the consumer checks holds again when it processes the scan. |
 | Scans          | Published to the plant's RabbitMQ and kept there until the consumer reconnects.            |
+
+Without the circuit breaker, each scan would wait the full 2 s for the consumer during an outage. Once half
+of the last 10 lot lookups have failed (from at least 5 lookups), the producer stops asking for 30 s and scans
+skip the lot checks immediately. The first scan after that asks again, and lookups resume once the consumer
+answers. Each change of state is logged at WARN as `Lot lookup circuit …`. Tune it with the
+`app.consumer.circuit-breaker.*` properties in `application.properties`.
 
 ### Building
 

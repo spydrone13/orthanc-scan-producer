@@ -175,12 +175,12 @@ so a slow or unreachable consumer must never block scanning. The consumer checks
       `currentStage`, `wipLocation`, `onHold`, `status`, `lastScan { clientId, userName, at }`
 - Connect and read timeouts are 2 seconds each
 - A 404 returns "no lot" (empty)
-- Any other error or timeout returns empty and logs a warning
-      ("Could not look up lot …; accepting scan without a hold check")
+- Any other error or timeout is thrown as a `RestClientException`. `ScanRejectionService` catches it, logs a
+      warning ("Could not look up lot …; accepting scan without a hold check") and treats the lot as empty.
 - When the lookup is empty, every lot check (PROD-7 and PROD-8) is skipped
 - Tests use `MockRestServiceServer` to cover found, 404, 5xx and timeout
 
-**Reference:** `…/scan/LotClient.java`, `LotState.java`; test `LotClientTest`
+**Reference:** `…/scan/LotClient.java`, `LotState.java`, `ScanRejectionService.findLot`; test `LotClientTest`
 
 ---
 
@@ -361,6 +361,36 @@ internet connection.
 
 ---
 
+### PROD-15: Circuit breaker on lot lookups
+
+**Type:** Story  **Epic:** Scan Producer  **Points:** 3  **Depends on:** PROD-6, PROD-7
+
+**Description:** While the consumer is down, every scan waits for the 2-second lookup timeout before failing open.
+A circuit breaker stops asking the consumer after repeated failures, so scans fail open right away, and probes
+again after a cool-down.
+
+**Acceptance criteria:**
+- Resilience4j `resilience4j-circuitbreaker` (core module, no Spring starter) wraps `LotClient.find` in
+      `ScanRejectionService`
+- Settings come from `app.consumer.circuit-breaker.*`, with these defaults: `failure-rate-threshold=50`,
+      `sliding-window-size=10` (count-based), `minimum-number-of-calls=5`, `wait-duration-in-open-state=30s`,
+      `permitted-calls-in-half-open-state=2`
+- `RestClientException`s (unreachable, timeouts, 5xx) count as failures. 4xx (`HttpClientErrorException`) are
+      ignored, and a 404 is still "no lot".
+- While the circuit is open, the consumer isn't called, the lot checks are skipped, and the route check
+      (PROD-11) still runs
+- After the wait, the next scan probes the consumer. If enough probes succeed, the circuit closes and the lot
+      checks apply again.
+- Each state change is logged at WARN. Failed lookups still log their own warning; calls refused by the open
+      circuit don't.
+- Tests cover failing open on an error, opening and no further calls, 4xx not opening the circuit, half-open
+      recovery, and the bean built from properties
+
+**Reference:** `…/scan/LotLookupConfig.java`, `ScanRejectionService.findLot`; tests `ScanRejectionServiceTest`,
+`LotLookupConfigTest`
+
+---
+
 ## Dependencies
 
 | Ticket  | Depends on        |
@@ -379,6 +409,7 @@ internet connection.
 | PROD-12 | PROD-1            |
 | PROD-13 | PROD-1            |
 | PROD-14 | PROD-1 to PROD-13 |
+| PROD-15 | PROD-6, PROD-7    |
 
 ## Suggested sprints
 
@@ -387,5 +418,6 @@ internet connection.
 | 1      | PROD-1, 2, 3, 4, 5, 12                    | 14     | Scans published to RabbitMQ from the dev UI         |
 | 2      | PROD-6, 7, 9, 10                          | 11     | Hold and status checks; catalog available offline   |
 | 3      | PROD-8, 11, 13, 14                        | 13     | Full validation, UI bundled, ready for the plant    |
+| 4      | PROD-15                                   | 3      | Scans stay fast during a consumer outage            |
 
-Total: 38 points.
+Total: 41 points.

@@ -68,7 +68,8 @@ One message per scan, JSON (`content_type: application/json`), routed with key `
 2. The producer checks it before publishing: lot status (on hold, closed, …), location mismatch, and whether
    the destination is a valid next stage. A rejected scan is returned to the UI and **never queued**.
    - If the consumer can't be reached for the lot check, the producer skips that check and publishes anyway;
-     the consumer flags what slips through.
+     the consumer flags what slips through. After repeated failures, a circuit breaker skips the lookup
+     entirely for 30 s, so scans don't each wait for the timeout.
 3. An accepted scan is published to `orthanc.scans`.
 4. If the UI sends the same `clientId` again, the producer returns the original response without publishing a
    second time. This memory is in-process and is lost when the producer restarts. The consumer de-duplicates

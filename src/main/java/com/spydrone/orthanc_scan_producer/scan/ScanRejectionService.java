@@ -7,15 +7,23 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClientException;
 
 import com.spydrone.orthanc_scan_producer.scan.ScanResponse.RecordedLocation;
 import com.spydrone.orthanc_scan_producer.stage.StageCatalog;
 import com.spydrone.orthanc_scan_producer.stage.StageCatalog.Stage;
 
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+
 /** Decides whether a scan is rejected before it's published, against the consumer's lot and the stage catalog. */
 @Service
 public class ScanRejectionService {
+
+	private static final Logger log = LoggerFactory.getLogger(ScanRejectionService.class);
 
 	static final String LOT_ON_HOLD = "LOT_ON_HOLD";
 	static final String LOT_LOCATION_MISMATCH = "LOT_LOCATION_MISMATCH";
@@ -27,10 +35,13 @@ public class ScanRejectionService {
 
 	private final LotClient lotClient;
 	private final StageCatalog stageCatalog;
+	private final CircuitBreaker lotLookupCircuitBreaker;
 
-	public ScanRejectionService(LotClient lotClient, StageCatalog stageCatalog) {
+	public ScanRejectionService(LotClient lotClient, StageCatalog stageCatalog,
+			CircuitBreaker lotLookupCircuitBreaker) {
 		this.lotClient = lotClient;
 		this.stageCatalog = stageCatalog;
+		this.lotLookupCircuitBreaker = lotLookupCircuitBreaker;
 	}
 
 	/**
@@ -42,14 +53,29 @@ public class ScanRejectionService {
 	 * here (see {@link ScanRecord#confirmsLocation()})
 	 * <li>the destination isn't a next stage of the scan's stage, or its WIP location isn't allowed there
 	 * </ol>
-	 * The lot checks are skipped if the consumer can't be asked, and the route check if no stage catalog
-	 * has been fetched; the consumer then flags what slips through.
+	 * The lot checks are skipped if the consumer can't be asked, or has failed repeatedly of late (see
+	 * {@link LotLookupConfig}), and the route check if no stage catalog has been fetched; the consumer then
+	 * flags what slips through.
 	 */
 	public Optional<ScanResponse> rejection(ScanRecord record) {
 		Optional<Map<String, Stage>> stages = stageCatalog.stages();
-		return lotClient.find(record.lotId())
+		return findLot(record.lotId())
 				.flatMap(lot -> lotRejection(record, lot, stages))
 				.or(() -> stages.flatMap(s -> routeRejection(record, s)));
+	}
+
+	/** The lot, or empty if the consumer doesn't know it, couldn't be asked, or the circuit is open. */
+	private Optional<LotState> findLot(String lotId) {
+		try {
+			return lotLookupCircuitBreaker.executeSupplier(() -> lotClient.find(lotId));
+		}
+		catch (CallNotPermittedException e) {
+			return Optional.empty();
+		}
+		catch (RestClientException e) {
+			log.warn("Could not look up lot {}; accepting scan without a hold check: {}", lotId, e.getMessage());
+			return Optional.empty();
+		}
 	}
 
 	private static Optional<ScanResponse> lotRejection(ScanRecord record, LotState lot,
