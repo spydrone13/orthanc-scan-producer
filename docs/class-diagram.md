@@ -282,5 +282,60 @@ classDiagram
 ### `GET /api/lot-stages`
 `LotStageController` calls `LotStageClient.stages()`. The client fetches the catalog from the consumer through the `lot-stages` circuit breaker. If that fails, it falls back to the in-memory copy, then to the on-disk cache file. If none of these has a catalog, the response is 503. `StageCatalog` parses the same JSON for scan checks and keeps a parsed `Snapshot` for 1 minute.
 
+```mermaid
+sequenceDiagram
+    autonumber
+    actor UI as orthanc-scan-ui
+    participant Ctrl as LotStageController
+    participant Client as LotStageClient
+    participant CB as CircuitBreaker (lot-stages)
+    participant Consumer as orthanc-scan-consumer
+    participant Disk as Cache file (app.lot-stages.cache-file)
+
+    UI->>Ctrl: GET /api/lot-stages
+    Ctrl->>Client: stages()
+    Client->>CB: executeSupplier(fetch)
+
+    alt Circuit CLOSED or HALF_OPEN and consumer answers
+        CB->>Consumer: GET /api/lot-stages (2 s connect/read timeout)
+        Consumer-->>CB: 200 JSON catalog
+        CB-->>Client: json (call recorded as success)
+        opt json is not null
+            Client->>Client: cached = json
+            Client->>Disk: save(json): write temp file, then atomic move
+            Client-->>Ctrl: Optional.of(json)
+        end
+    else Consumer fails (timeout, unreachable, 5xx)
+        CB->>Consumer: GET /api/lot-stages
+        Consumer--xCB: RestClientException
+        CB-->>Client: RestClientException (failure recorded)
+        Client->>Client: log.warn("serving the cached copy")
+    else Circuit OPEN
+        CB-->>Client: CallNotPermittedException (consumer not called)
+    end
+
+    Note over Client,Disk: Fallback when the consumer gave no JSON
+    alt in-memory cached is set
+        Client-->>Ctrl: Optional.of(cached)
+    else cached is null
+        Client->>Disk: load()
+        alt cache file readable
+            Disk-->>Client: json
+            Client->>Client: cached = json
+            Client-->>Ctrl: Optional.of(json)
+        else IOException (no file yet)
+            Client-->>Ctrl: Optional.empty()
+        end
+    end
+
+    alt catalog present
+        Ctrl-->>UI: 200 OK (application/json)
+    else empty
+        Ctrl-->>UI: 503 Service Unavailable
+    end
+
+    Note over Ctrl,Client: StageCatalog.stages() (used by scan checks) calls the same<br/>LotStageClient.stages() path, but only when its 1-minute Snapshot has expired.
+```
+
 ### Health
 `ConsumerCircuitsHealthIndicator` reports each circuit breaker's state and counters at `/actuator/health/circuits`. It always reports UP, because an open circuit means the producer is falling back as designed.
