@@ -66,8 +66,21 @@ classDiagram
             -Duration TIMEOUT$
             -RestClient restClient
             -CircuitBreaker circuitBreaker
-            +find(String lotId) Optional~LotState~
-            -fetch(String lotId) Optional~LotState~
+            +find(String lotId) LotLookup
+            -fetch(String lotId) LotLookup
+        }
+        class LotLookup {
+            <<sealed interface>>
+        }
+        class Found {
+            <<record>>
+            +LotState lot
+        }
+        class NotFound {
+            <<record>>
+        }
+        class Unavailable {
+            <<record>>
         }
         class LotState {
             <<record>>
@@ -241,7 +254,11 @@ classDiagram
     ScanRejectionService --> StageCatalog
     LotClient --> CircuitBreaker : lotLookupCircuitBreaker
     ScanRejectionService ..> ScanResponse : builds rejections
-    LotClient ..> LotState : GET /api/lots/lotId
+    LotClient ..> LotLookup : GET /api/lots/lotId
+    Found ..|> LotLookup
+    NotFound ..|> LotLookup : 404
+    Unavailable ..|> LotLookup : failure or circuit open
+    Found --> LotState
     LotState *-- "0..1" LastScan
     ScanRecord --> ScanType
     ScanResponse --> ScanType
@@ -261,6 +278,7 @@ classDiagram
     UiConfig ..|> WebMvcConfigurer
 
     note for Settings "Nested in ConsumerCircuitBreakerConfig"
+    note for Found "Found, NotFound, Unavailable are nested in LotLookup"
     note for LastScan "Nested in LotState"
     note for RecordedLocation "Nested in ScanResponse"
     note for Stage "Nested in StageCatalog"
@@ -272,14 +290,18 @@ classDiagram
 1. `ScanController` checks that the `Idempotency-Key` header (if present) matches `clientId`. If it doesn't, it returns 400.
 2. `ScanService.submit` looks up `clientId` in its in-memory `accepted` map. On a hit, it returns the original response.
 3. `ScanRejectionService.rejection` runs the checks in this order:
-   - **Lot checks**: against the lot from `LotClient.find`. The client calls the consumer through its own `lot-lookup` circuit breaker. It returns empty if the lot is unknown, the consumer fails, or the circuit is open, and then these checks are skipped. Rejection codes:
+   - **Lot lookup**: `LotClient.find` calls the consumer through its own `lot-lookup` circuit breaker and returns a `LotLookup`:
+     - `Found(lot)`: the lot checks and route checks run.
+     - `NotFound()` (404): the scan is **accepted without any checks**.
+     - `Unavailable()` (the consumer failed, timed out or gave an empty answer, or the circuit is open): the lot checks are skipped and the route checks still run.
+   - **Lot checks**: run only on `Found`. Rejection codes:
      - `LOT_<STATUS>`: the lot isn't active
      - `LOT_ON_HOLD`: the lot is on hold and the scan moves it out of its stage
      - `LOT_LOCATION_MISMATCH`: the records have the lot at another stage and the operator hasn't confirmed its location. This response includes a `RecordedLocation`.
    - **Route checks**: against `StageCatalog`. Rejection codes:
      - `INVALID_NEXT_STAGE`
      - `WIP_LOCATION_NOT_ALLOWED`
-   - The lot checks are skipped if the consumer can't be reached or the circuit is open. The route checks are skipped if no catalog has ever been fetched.
+   - The route checks are also skipped if no catalog has ever been fetched.
 4. If no check rejects the scan, `RabbitTemplate.convertAndSend` publishes it and the response is stored in `accepted`. If RabbitMQ can't be reached, an `AmqpException` is thrown and `ApiExceptionHandler` turns it into a 503.
 
 The diagrams below show one scenario each. A rejection is a 200 response with an `errorCode`. It is never published or stored, so a resend is checked again. `StageCatalog.stages()` is shown as a single call; see the [lot-stages scenarios](#get-apilot-stages) for what happens inside it.
@@ -290,8 +312,9 @@ The diagrams below show one scenario each. A rejection is a 200 response with an
 4. [Lot rejected: inactive or on hold](#4-lot-rejected-inactive-or-on-hold)
 5. [Location mismatch, then confirmed](#5-location-mismatch-then-confirmed)
 6. [Route rejected](#6-route-rejected)
-7. [Consumer unavailable](#7-consumer-unavailable-fail-open): fail open
-8. [Broker unavailable](#8-broker-unavailable-503): 503
+7. [Unknown lot](#7-unknown-lot-404): 404, accepted without any checks
+8. [Consumer unavailable](#8-consumer-unavailable-fail-open): fail open
+9. [Broker unavailable](#9-broker-unavailable-503): 503
 
 #### 1. Accepted and published
 The scan is new, the lot is active, not on hold and at the scan's stage, and the route is allowed.
@@ -313,12 +336,12 @@ sequenceDiagram
     Ctrl->>Svc: submit(record)
     Svc->>Svc: accepted.get(clientId): none
     Svc->>Rej: rejection(record)
-    Rej->>Catalog: stages()
-    Catalog-->>Rej: stages by id
     Rej->>Lots: find(lotId)
     Lots->>Consumer: GET /api/lots/lotId (lot-lookup breaker, 2 s timeout)
     Consumer-->>Lots: 200 LotState (active, not on hold, at currentStage)
-    Lots-->>Rej: Optional.of(lot)
+    Lots-->>Rej: Found(lot)
+    Rej->>Catalog: stages()
+    Catalog-->>Rej: stages by id
     Rej->>Rej: lot checks pass
     Rej->>Rej: route checks pass
     Rej-->>Svc: Optional.empty()
@@ -381,12 +404,12 @@ sequenceDiagram
     Ctrl->>Svc: submit(record)
     Svc->>Svc: accepted.get(clientId): none
     Svc->>Rej: rejection(record)
-    Rej->>Catalog: stages()
-    Catalog-->>Rej: stages by id
     Rej->>Lots: find(lotId)
     Lots->>Consumer: GET /api/lots/lotId
     Consumer-->>Lots: 200 LotState
-    Lots-->>Rej: Optional.of(lot)
+    Lots-->>Rej: Found(lot)
+    Rej->>Catalog: stages()
+    Catalog-->>Rej: stages by id
     alt status is not "active"
         Rej-->>Svc: rejected: LOT_CANCELED, LOT_COMPLETED, ... ("Lot L1 is canceled")
     else onHold and destinationStage differs from the lot's stage
@@ -417,12 +440,12 @@ sequenceDiagram
         UI->>Ctrl: POST /api/scans (locationConfirmed unset)
         Ctrl->>Svc: submit(record)
         Svc->>Rej: rejection(record)
-        Rej->>Catalog: stages()
-        Catalog-->>Rej: stages by id
         Rej->>Lots: find(lotId)
         Lots->>Consumer: GET /api/lots/lotId
         Consumer-->>Lots: 200 LotState (currentStage elsewhere, lastScan)
-        Lots-->>Rej: Optional.of(lot)
+        Lots-->>Rej: Found(lot)
+        Rej->>Catalog: stages()
+        Catalog-->>Rej: stages by id (for stage names in the message)
         Rej->>Rej: isMismatch: true, confirmsLocation(): false
         alt recorded stage leads to the scan's stage (missed scan)
             Rej->>Rej: "Lot L1 was never logged out of X (logged by u at t). Confirm it is here..."
@@ -442,11 +465,11 @@ sequenceDiagram
         Ctrl->>Svc: submit(record)
         Svc->>Svc: accepted.get(clientId): none (rejections aren't stored)
         Svc->>Rej: rejection(record)
-        Rej->>Catalog: stages()
         Rej->>Lots: find(lotId)
         Lots->>Consumer: GET /api/lots/lotId
         Consumer-->>Lots: 200 LotState
-        Lots-->>Rej: Optional.of(lot)
+        Lots-->>Rej: Found(lot)
+        Rej->>Catalog: stages()
         Rej->>Rej: confirmsLocation(): true, mismatch accepted
         Rej->>Rej: route checks pass
         Rej-->>Svc: Optional.empty()
@@ -458,7 +481,7 @@ sequenceDiagram
 ```
 
 #### 6. Route rejected
-The lot checks pass, or the lot is unknown, but the move isn't allowed by the stage catalog.
+The lot checks pass, or the consumer can't be asked, but the move isn't allowed by the stage catalog. A lot the consumer doesn't know is never route checked (see scenario 7).
 
 ```mermaid
 sequenceDiagram
@@ -474,10 +497,10 @@ sequenceDiagram
     Ctrl->>Svc: submit(record)
     Svc->>Svc: accepted.get(clientId): none
     Svc->>Rej: rejection(record)
+    Rej->>Lots: find(lotId)
+    Lots-->>Rej: Found(lot) that passes the lot checks, or Unavailable()
     Rej->>Catalog: stages()
     Catalog-->>Rej: stages by id
-    Rej->>Lots: find(lotId)
-    Lots-->>Rej: lot that passes the lot checks, or Optional.empty()
     Rej->>Rej: routeRejection(record, stages)
     alt destination is not in the current stage's next-stages
         Rej-->>Svc: rejected: INVALID_NEXT_STAGE ("Y is not a next stage of X")
@@ -489,7 +512,36 @@ sequenceDiagram
     Note over Rej: Route checks don't apply to moves within the scan's stage,<br/>scans from a stage the catalog doesn't know, or when no catalog was ever fetched
 ```
 
-#### 7. Consumer unavailable (fail open)
+#### 7. Unknown lot (404)
+The consumer answers 404 for the lot. The scan is accepted and published without any lot or route checks.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor UI as orthanc-scan-ui
+    participant Ctrl as ScanController
+    participant Svc as ScanService
+    participant Rej as ScanRejectionService
+    participant Lots as LotClient
+    participant Consumer as orthanc-scan-consumer
+    participant Rabbit as RabbitMQ (RabbitTemplate)
+
+    UI->>Ctrl: POST /api/scans
+    Ctrl->>Svc: submit(record)
+    Svc->>Svc: accepted.get(clientId): none
+    Svc->>Rej: rejection(record)
+    Rej->>Lots: find(lotId)
+    Lots->>Consumer: GET /api/lots/lotId
+    Consumer-->>Lots: 404 Not Found
+    Lots-->>Rej: NotFound() (not counted as a breaker failure)
+    Rej-->>Svc: Optional.empty() (StageCatalog not consulted)
+    Svc->>Rabbit: convertAndSend(exchange, routingKey, record)
+    Svc->>Svc: accepted.putIfAbsent(clientId, ScanResponse.accepted)
+    Ctrl-->>UI: 200 OK (accepted)
+    Note over Rej: No lot checks and no route checks:<br/>a lot the consumer doesn't know is always allowed
+```
+
+#### 8. Consumer unavailable (fail open)
 The lot can't be looked up. The scan is still checked against the cached stage catalog and published.
 
 ```mermaid
@@ -508,8 +560,6 @@ sequenceDiagram
     Ctrl->>Svc: submit(record)
     Svc->>Svc: accepted.get(clientId): none
     Svc->>Rej: rejection(record)
-    Rej->>Catalog: stages()
-    Catalog-->>Rej: stages by id (cached copy)
     Rej->>Lots: find(lotId)
     alt circuit closed
         Lots->>Consumer: GET /api/lots/lotId
@@ -518,8 +568,10 @@ sequenceDiagram
     else circuit open
         Lots->>Lots: CallNotPermittedException (consumer not called)
     end
-    Lots-->>Rej: Optional.empty()
+    Lots-->>Rej: Unavailable()
     Rej->>Rej: lot checks skipped
+    Rej->>Catalog: stages()
+    Catalog-->>Rej: stages by id (cached copy)
     Rej->>Rej: route checks pass
     Rej-->>Svc: Optional.empty()
     Svc->>Rabbit: convertAndSend(exchange, routingKey, record)
@@ -528,7 +580,7 @@ sequenceDiagram
     Note over Rabbit: The consumer flags anything the skipped lot checks let through
 ```
 
-#### 8. Broker unavailable (503)
+#### 9. Broker unavailable (503)
 The scan passes the checks, but RabbitMQ can't be reached.
 
 ```mermaid

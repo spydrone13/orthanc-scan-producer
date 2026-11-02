@@ -41,23 +41,30 @@ class LotClientTest {
 	void mapsLotFromConsumer() {
 		server.expect(requestTo(URL)).andRespond(withSuccess(LOT, MediaType.APPLICATION_JSON));
 
-		assertThat(client.find("L1")).contains(new LotState("intake", "INTAKE-001", true, "active",
-				new LotState.LastScan("c1", "jsmith", Instant.parse("2026-10-06T11:59:00Z"))));
+		assertThat(client.find("L1")).isEqualTo(new LotLookup.Found(new LotState("intake", "INTAKE-001", true, "active",
+				new LotState.LastScan("c1", "jsmith", Instant.parse("2026-10-06T11:59:00Z")))));
 		server.verify();
 	}
 
 	@Test
-	void unknownLotIsEmpty() {
+	void unknownLotIsNotFound() {
 		server.expect(requestTo("http://consumer/api/lots/nope")).andRespond(withResourceNotFound());
 
-		assertThat(client.find("nope")).isEmpty();
+		assertThat(client.find("nope")).isEqualTo(new LotLookup.NotFound());
 	}
 
 	@Test
-	void consumerErrorIsEmpty() {
+	void consumerErrorIsUnavailable() {
 		server.expect(requestTo(URL)).andRespond(withServerError());
 
-		assertThat(client.find("L1")).isEmpty();
+		assertThat(client.find("L1")).isEqualTo(new LotLookup.Unavailable());
+	}
+
+	@Test
+	void emptyAnswerIsUnavailable() {
+		server.expect(requestTo(URL)).andRespond(withSuccess());
+
+		assertThat(client.find("L1")).isEqualTo(new LotLookup.Unavailable());
 	}
 
 	@Test
@@ -65,7 +72,7 @@ class LotClientTest {
 		server.expect(twice(), requestTo(URL)).andRespond(withServerError());
 
 		for (int i = 0; i < 4; i++) {
-			assertThat(client.find("L1")).isEmpty();
+			assertThat(client.find("L1")).isEqualTo(new LotLookup.Unavailable());
 		}
 
 		assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
@@ -77,7 +84,7 @@ class LotClientTest {
 		server.expect(times(3), requestTo(URL)).andRespond(withBadRequest());
 
 		for (int i = 0; i < 3; i++) {
-			assertThat(client.find("L1")).isEmpty();
+			assertThat(client.find("L1")).isEqualTo(new LotLookup.Unavailable());
 		}
 
 		assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
@@ -89,7 +96,7 @@ class LotClientTest {
 		server.expect(times(3), requestTo(URL)).andRespond(withResourceNotFound());
 
 		for (int i = 0; i < 3; i++) {
-			assertThat(client.find("L1")).isEmpty();
+			assertThat(client.find("L1")).isEqualTo(new LotLookup.NotFound());
 		}
 
 		assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
@@ -105,7 +112,7 @@ class LotClientTest {
 
 		breaker.transitionToHalfOpenState();
 
-		assertThat(client.find("L1")).isPresent();
+		assertThat(client.find("L1")).isInstanceOf(LotLookup.Found.class);
 		assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
 		server.verify();
 	}

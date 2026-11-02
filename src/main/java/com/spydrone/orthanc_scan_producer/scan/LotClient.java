@@ -1,7 +1,6 @@
 package com.spydrone.orthanc_scan_producer.scan;
 
 import java.time.Duration;
-import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,10 +19,10 @@ import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 
 /**
- * Looks up a lot in orthanc-scan-consumer, giving up after 2 s. Fails open: if the consumer can't be
- * asked, the lot is reported as not found and the scan's lot checks are skipped. After repeated failures,
- * the circuit breaker (see {@link ConsumerCircuitBreakerConfig}) skips the call for a while so scans don't
- * each wait on the timeout.
+ * Looks up a lot in orthanc-scan-consumer, giving up after 2 s. Never throws: a 404 is reported as
+ * {@link LotLookup.NotFound}, and any failure as {@link LotLookup.Unavailable} so scans fail open. After
+ * repeated failures, the circuit breaker (see {@link ConsumerCircuitBreakerConfig}) skips the call for a
+ * while so scans don't each wait on the timeout.
  */
 @Component
 public class LotClient {
@@ -53,32 +52,38 @@ public class LotClient {
 	}
 
 	/**
-	 * The lot, or empty if the consumer doesn't know it, couldn't be asked, or the circuit is open.
+	 * The lot if the consumer has it, {@link LotLookup.NotFound} if it answered 404, or
+	 * {@link LotLookup.Unavailable} if it couldn't be asked, gave an empty answer, or its circuit is open.
 	 */
-	public Optional<LotState> find(String lotId) {
+	public LotLookup find(String lotId) {
 		try {
 			return circuitBreaker.executeSupplier(() -> fetch(lotId));
 		}
 		catch (CallNotPermittedException e) {
 			// Circuit open: don't wait on the consumer.
-			return Optional.empty();
+			return new LotLookup.Unavailable();
 		}
 		catch (RestClientException e) {
 			log.warn("Could not look up lot {}; scans skip the lot checks: {}", lotId, e.getMessage());
-			return Optional.empty();
+			return new LotLookup.Unavailable();
 		}
 	}
 
-	/** A 404 is an answer, not a failure, so it's empty here rather than counted by the breaker. */
-	private Optional<LotState> fetch(String lotId) {
+	/** A 404 is an answer, not a failure, so it's mapped here rather than counted by the breaker. */
+	private LotLookup fetch(String lotId) {
 		try {
-			return Optional.ofNullable(restClient.get()
+			LotState lot = restClient.get()
 					.uri("/api/lots/{lotId}", lotId)
 					.retrieve()
-					.body(LotState.class));
+					.body(LotState.class);
+			if (lot == null) {
+				log.warn("Consumer returned no body for lot {}; scans skip the lot checks", lotId);
+				return new LotLookup.Unavailable();
+			}
+			return new LotLookup.Found(lot);
 		}
 		catch (HttpClientErrorException.NotFound e) {
-			return Optional.empty();
+			return new LotLookup.NotFound();
 		}
 	}
 }

@@ -42,15 +42,19 @@ public class ScanRejectionService {
 	 * here (see {@link ScanRecord#confirmsLocation()})
 	 * <li>the destination isn't a next stage of the scan's stage, or its WIP location isn't allowed there
 	 * </ol>
-	 * The lot checks are skipped if {@link LotClient} finds no lot, including when the consumer can't be
-	 * asked or its circuit is open, and the route check if no stage catalog has been fetched; the consumer
-	 * then flags what slips through.
+	 * A lot the consumer doesn't know (404) is accepted without any checks. The lot checks are skipped if
+	 * the consumer can't be asked or its circuit is open, and the route check if no stage catalog has been
+	 * fetched; the consumer then flags what slips through.
 	 */
 	public Optional<ScanResponse> rejection(ScanRecord record) {
-		Optional<Map<String, Stage>> stages = stageCatalog.stages();
-		return lotClient.find(record.lotId())
-				.flatMap(lot -> lotRejection(record, lot, stages))
-				.or(() -> stages.flatMap(s -> routeRejection(record, s)));
+		return switch (lotClient.find(record.lotId())) {
+			case LotLookup.NotFound() -> Optional.empty();
+			case LotLookup.Found(LotState lot) -> {
+				Optional<Map<String, Stage>> stages = stageCatalog.stages();
+				yield lotRejection(record, lot, stages).or(() -> stages.flatMap(s -> routeRejection(record, s)));
+			}
+			case LotLookup.Unavailable() -> stageCatalog.stages().flatMap(s -> routeRejection(record, s));
+		};
 	}
 
 	private static Optional<ScanResponse> lotRejection(ScanRecord record, LotState lot,
