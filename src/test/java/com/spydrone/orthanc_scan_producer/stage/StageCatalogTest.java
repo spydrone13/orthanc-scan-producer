@@ -76,6 +76,55 @@ class StageCatalogTest {
 		given(client.stages()).willReturn(Optional.empty());
 
 		assertThat(catalog.stages()).isEmpty();
+		assertThat(catalog.json()).isEmpty();
+	}
+
+	@Test
+	void servesTheJsonAsIs() {
+		given(client.stages()).willReturn(Optional.of(JSON));
+
+		assertThat(catalog.json()).contains(JSON);
+	}
+
+	@Test
+	void jsonAndStagesShareOneFetch() {
+		given(client.stages()).willReturn(Optional.of(JSON));
+
+		catalog.json();
+		catalog.stages();
+		catalog.json();
+
+		verify(client, times(1)).stages();
+	}
+
+	@Test
+	void servesJsonThatCantBeReadWhileScansKeepTheLastCatalog() {
+		given(client.stages()).willReturn(Optional.of(JSON)).willReturn(Optional.of("not json"));
+
+		catalog.stages();
+		clock.advance(Duration.ofMinutes(2));
+
+		assertThat(catalog.json()).contains("not json");
+		assertThat(catalog.stages().orElseThrow()).containsKey("photolithography");
+	}
+
+	@Test
+	void stagesEmptyWhenNoCatalogCouldEverBeRead() {
+		given(client.stages()).willReturn(Optional.of("not json"));
+
+		assertThat(catalog.json()).contains("not json");
+		assertThat(catalog.stages()).isEmpty();
+	}
+
+	@Test
+	void keepsTheLastSnapshotWhenNothingIsFetched() {
+		given(client.stages()).willReturn(Optional.of(JSON)).willReturn(Optional.empty());
+
+		catalog.json();
+		clock.advance(Duration.ofMinutes(2));
+
+		assertThat(catalog.json()).contains(JSON);
+		assertThat(catalog.stages()).isPresent();
 	}
 
 	private static final class MutableClock extends Clock {

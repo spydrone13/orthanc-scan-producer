@@ -21,11 +21,11 @@ class LotStageControllerTest {
 	private MockMvc mvc;
 
 	@MockitoBean
-	private LotStageClient lotStageClient;
+	private StageCatalog stageCatalog;
 
 	@Test
 	void passesTheCatalogThrough() throws Exception {
-		given(lotStageClient.stages()).willReturn(Optional.of("{\"intake\":{\"description\":\"Intake\"}}"));
+		given(stageCatalog.json()).willReturn(Optional.of("{\"intake\":{\"description\":\"Intake\"}}"));
 
 		mvc.perform(get("/api/lot-stages"))
 				.andExpect(status().isOk())
@@ -35,7 +35,7 @@ class LotStageControllerTest {
 
 	@Test
 	void unavailableWithNoCatalog() throws Exception {
-		given(lotStageClient.stages()).willReturn(Optional.empty());
+		given(stageCatalog.json()).willReturn(Optional.empty());
 
 		mvc.perform(get("/api/lot-stages")).andExpect(status().isServiceUnavailable());
 	}

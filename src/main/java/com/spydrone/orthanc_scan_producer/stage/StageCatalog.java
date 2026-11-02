@@ -21,9 +21,10 @@ import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * The lot-stage graph for checking scans, parsed from {@link LotStageClient}'s catalog. Kept for a
- * minute so scans don't each wait on the consumer; the client's on-disk copy covers the consumer
- * being unreachable.
+ * The lot-stage catalog from {@link LotStageClient}, kept for a minute so neither scans nor UI loads each
+ * wait on the consumer, and so the UI is shown the same catalog the scans are checked against. Served both
+ * as the consumer's JSON, passed through as-is for the UI, and parsed into the graph for the scan checks.
+ * The client's on-disk copy covers the consumer being unreachable.
  */
 @Component
 public class StageCatalog {
@@ -51,7 +52,8 @@ public class StageCatalog {
 	public record WipLocation(String description) {
 	}
 
-	private record Snapshot(Map<String, Stage> stages, Instant fetchedAt) {
+	/** @param stages the last catalog that could be read; null if none could */
+	private record Snapshot(String json, Map<String, Stage> stages, Instant fetchedAt) {
 	}
 
 	private final LotStageClient lotStageClient;
@@ -68,16 +70,31 @@ public class StageCatalog {
 		this.clock = clock;
 	}
 
-	/** Stages by id, or empty if no catalog has ever been fetched or it can't be read. */
+	/** The consumer's catalog JSON as-is, or empty if none has ever been fetched. */
+	public Optional<String> json() {
+		return refresh().map(Snapshot::json);
+	}
+
+	/** Stages by id, or empty if no catalog has ever been fetched or none could be read. */
 	public Optional<Map<String, Stage>> stages() {
+		return refresh().map(Snapshot::stages);
+	}
+
+	/**
+	 * The snapshot, fetched again once it's a minute old. A catalog that can't be read is still kept for
+	 * the UI, while scans keep being checked against the last one that could. If nothing is fetched, the
+	 * old snapshot is served and the next call tries again.
+	 */
+	private Optional<Snapshot> refresh() {
 		Snapshot current = snapshot;
 		Instant now = clock.instant();
 		if (current != null && current.fetchedAt().plus(MAX_AGE).isAfter(now)) {
-			return Optional.of(current.stages());
+			return Optional.of(current);
 		}
-		Optional<Map<String, Stage>> parsed = lotStageClient.stages().flatMap(StageCatalog::parse);
-		parsed.ifPresent(stages -> snapshot = new Snapshot(stages, now));
-		return parsed.or(() -> Optional.ofNullable(current).map(Snapshot::stages));
+		Optional<Snapshot> fetched = lotStageClient.stages().map(json -> new Snapshot(json,
+				parse(json).orElse(current == null ? null : current.stages()), now));
+		fetched.ifPresent(fresh -> snapshot = fresh);
+		return fetched.or(() -> Optional.ofNullable(current));
 	}
 
 	private static Optional<Map<String, Stage>> parse(String json) {
