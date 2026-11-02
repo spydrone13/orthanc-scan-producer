@@ -282,6 +282,278 @@ classDiagram
    - The lot checks are skipped if the consumer can't be reached or the circuit is open. The route checks are skipped if no catalog has ever been fetched.
 4. If no check rejects the scan, `RabbitTemplate.convertAndSend` publishes it and the response is stored in `accepted`. If RabbitMQ can't be reached, an `AmqpException` is thrown and `ApiExceptionHandler` turns it into a 503.
 
+The diagrams below show one scenario each. A rejection is a 200 response with an `errorCode`. It is never published or stored, so a resend is checked again. `StageCatalog.stages()` is shown as a single call; see the [lot-stages scenarios](#get-apilot-stages) for what happens inside it.
+
+1. [Accepted and published](#1-accepted-and-published): the happy path
+2. [Repeat send](#2-repeat-send-idempotent): idempotent
+3. [Bad request](#3-bad-request-400): 400
+4. [Lot rejected: inactive or on hold](#4-lot-rejected-inactive-or-on-hold)
+5. [Location mismatch, then confirmed](#5-location-mismatch-then-confirmed)
+6. [Route rejected](#6-route-rejected)
+7. [Consumer unavailable](#7-consumer-unavailable-fail-open): fail open
+8. [Broker unavailable](#8-broker-unavailable-503): 503
+
+#### 1. Accepted and published
+The scan is new, the lot is active, not on hold and at the scan's stage, and the route is allowed.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor UI as orthanc-scan-ui
+    participant Ctrl as ScanController
+    participant Svc as ScanService
+    participant Rej as ScanRejectionService
+    participant Catalog as StageCatalog
+    participant Lots as LotClient
+    participant Consumer as orthanc-scan-consumer
+    participant Rabbit as RabbitMQ (RabbitTemplate)
+
+    UI->>Ctrl: POST /api/scans (Idempotency-Key = clientId)
+    Ctrl->>Ctrl: @Valid ScanRecord, key matches clientId
+    Ctrl->>Svc: submit(record)
+    Svc->>Svc: accepted.get(clientId): none
+    Svc->>Rej: rejection(record)
+    Rej->>Catalog: stages()
+    Catalog-->>Rej: stages by id
+    Rej->>Lots: find(lotId)
+    Lots->>Consumer: GET /api/lots/lotId (lot-lookup breaker, 2 s timeout)
+    Consumer-->>Lots: 200 LotState (active, not on hold, at currentStage)
+    Lots-->>Rej: Optional.of(lot)
+    Rej->>Rej: lot checks pass
+    Rej->>Rej: route checks pass
+    Rej-->>Svc: Optional.empty()
+    Svc->>Rabbit: convertAndSend(exchange, routingKey, record)
+    Svc->>Svc: accepted.putIfAbsent(clientId, ScanResponse.accepted)
+    Svc-->>Ctrl: ScanResponse (no errorCode)
+    Ctrl-->>UI: 200 OK
+```
+
+#### 2. Repeat send (idempotent)
+The UI sends a scan again after it was already accepted, for example because it never received the first response.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor UI as orthanc-scan-ui
+    participant Ctrl as ScanController
+    participant Svc as ScanService
+
+    UI->>Ctrl: POST /api/scans (same clientId as an accepted scan)
+    Ctrl->>Svc: submit(record)
+    Svc->>Svc: accepted.get(clientId): found
+    Svc-->>Ctrl: original ScanResponse
+    Ctrl-->>UI: 200 OK (same response as the first send)
+    Note over Svc: No checks, no second publish.<br/>The accepted map is in memory and per instance.
+```
+
+#### 3. Bad request (400)
+The request is malformed. The service is never called.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor UI as orthanc-scan-ui
+    participant Ctrl as ScanController
+
+    UI->>Ctrl: POST /api/scans
+    alt @Valid fails (blank required field, correctionReason over 2000 chars)
+        Ctrl-->>UI: 400 Bad Request (MethodArgumentNotValidException)
+    else Idempotency-Key present but not equal to clientId
+        Ctrl-->>UI: 400 Bad Request ("Idempotency-Key must match clientId")
+    end
+```
+
+#### 4. Lot rejected: inactive or on hold
+The consumer has the lot, but it isn't active, or it is on hold and the scan would move it out of its stage.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor UI as orthanc-scan-ui
+    participant Ctrl as ScanController
+    participant Svc as ScanService
+    participant Rej as ScanRejectionService
+    participant Catalog as StageCatalog
+    participant Lots as LotClient
+    participant Consumer as orthanc-scan-consumer
+
+    UI->>Ctrl: POST /api/scans
+    Ctrl->>Svc: submit(record)
+    Svc->>Svc: accepted.get(clientId): none
+    Svc->>Rej: rejection(record)
+    Rej->>Catalog: stages()
+    Catalog-->>Rej: stages by id
+    Rej->>Lots: find(lotId)
+    Lots->>Consumer: GET /api/lots/lotId
+    Consumer-->>Lots: 200 LotState
+    Lots-->>Rej: Optional.of(lot)
+    alt status is not "active"
+        Rej-->>Svc: rejected: LOT_CANCELED, LOT_COMPLETED, ... ("Lot L1 is canceled")
+    else onHold and destinationStage differs from the lot's stage
+        Rej-->>Svc: rejected: LOT_ON_HOLD ("Lot L1 is on hold")
+    end
+    Svc-->>Ctrl: ScanResponse with errorCode
+    Ctrl-->>UI: 200 OK (errorCode, errorMessage)
+    Note over Svc: Not published, not stored.<br/>The UI shows the scan as rejected, not resendable.
+```
+
+#### 5. Location mismatch, then confirmed
+The records have the lot at another stage than the scan's, and not at its destination either. The operator confirms the lot is really here, and the UI sends the scan again.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor UI as orthanc-scan-ui
+    participant Ctrl as ScanController
+    participant Svc as ScanService
+    participant Rej as ScanRejectionService
+    participant Catalog as StageCatalog
+    participant Lots as LotClient
+    participant Consumer as orthanc-scan-consumer
+    participant Rabbit as RabbitMQ (RabbitTemplate)
+
+    rect rgba(200, 120, 0, 0.12)
+        Note over UI,Rabbit: Phase 1: first send, no confirmation
+        UI->>Ctrl: POST /api/scans (locationConfirmed unset)
+        Ctrl->>Svc: submit(record)
+        Svc->>Rej: rejection(record)
+        Rej->>Catalog: stages()
+        Catalog-->>Rej: stages by id
+        Rej->>Lots: find(lotId)
+        Lots->>Consumer: GET /api/lots/lotId
+        Consumer-->>Lots: 200 LotState (currentStage elsewhere, lastScan)
+        Lots-->>Rej: Optional.of(lot)
+        Rej->>Rej: isMismatch: true, confirmsLocation(): false
+        alt recorded stage leads to the scan's stage (missed scan)
+            Rej->>Rej: "Lot L1 was never logged out of X (logged by u at t). Confirm it is here..."
+        else logged somewhere else entirely
+            Rej->>Rej: "Records show lot L1 at X (logged by u at t), not Y. Confirm it is here..."
+        end
+        Rej-->>Svc: mismatch: LOT_LOCATION_MISMATCH + recorded (stage, wipLocation, scannedBy, scannedAt)
+        Svc-->>Ctrl: ScanResponse
+        Ctrl-->>UI: 200 OK (LOT_LOCATION_MISMATCH, recorded)
+    end
+
+    UI->>UI: operator confirms the lot is here (optionally gives a reason)
+
+    rect rgba(0, 150, 80, 0.12)
+        Note over UI,Rabbit: Phase 2: resend with the same clientId
+        UI->>Ctrl: POST /api/scans (locationConfirmed = true, correctionReason)
+        Ctrl->>Svc: submit(record)
+        Svc->>Svc: accepted.get(clientId): none (rejections aren't stored)
+        Svc->>Rej: rejection(record)
+        Rej->>Catalog: stages()
+        Rej->>Lots: find(lotId)
+        Lots->>Consumer: GET /api/lots/lotId
+        Consumer-->>Lots: 200 LotState
+        Lots-->>Rej: Optional.of(lot)
+        Rej->>Rej: confirmsLocation(): true, mismatch accepted
+        Rej->>Rej: route checks pass
+        Rej-->>Svc: Optional.empty()
+        Svc->>Rabbit: convertAndSend(exchange, routingKey, record)
+        Svc->>Svc: accepted.putIfAbsent(clientId, ScanResponse.accepted)
+        Ctrl-->>UI: 200 OK (accepted)
+    end
+    Note over Rabbit: The consumer moves the lot to the scan's stage first,<br/>then applies the scan
+```
+
+#### 6. Route rejected
+The lot checks pass, or the lot is unknown, but the move isn't allowed by the stage catalog.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor UI as orthanc-scan-ui
+    participant Ctrl as ScanController
+    participant Svc as ScanService
+    participant Rej as ScanRejectionService
+    participant Catalog as StageCatalog
+    participant Lots as LotClient
+
+    UI->>Ctrl: POST /api/scans
+    Ctrl->>Svc: submit(record)
+    Svc->>Svc: accepted.get(clientId): none
+    Svc->>Rej: rejection(record)
+    Rej->>Catalog: stages()
+    Catalog-->>Rej: stages by id
+    Rej->>Lots: find(lotId)
+    Lots-->>Rej: lot that passes the lot checks, or Optional.empty()
+    Rej->>Rej: routeRejection(record, stages)
+    alt destination is not in the current stage's next-stages
+        Rej-->>Svc: rejected: INVALID_NEXT_STAGE ("Y is not a next stage of X")
+    else WIP location unknown in the destination, or not in next-wip-locations
+        Rej-->>Svc: rejected: WIP_LOCATION_NOT_ALLOWED ("Lots from X can't go to W in Y")
+    end
+    Svc-->>Ctrl: ScanResponse with errorCode
+    Ctrl-->>UI: 200 OK (errorCode, errorMessage)
+    Note over Rej: Route checks don't apply to moves within the scan's stage,<br/>scans from a stage the catalog doesn't know, or when no catalog was ever fetched
+```
+
+#### 7. Consumer unavailable (fail open)
+The lot can't be looked up. The scan is still checked against the cached stage catalog and published.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor UI as orthanc-scan-ui
+    participant Ctrl as ScanController
+    participant Svc as ScanService
+    participant Rej as ScanRejectionService
+    participant Catalog as StageCatalog
+    participant Lots as LotClient
+    participant Consumer as orthanc-scan-consumer
+    participant Rabbit as RabbitMQ (RabbitTemplate)
+
+    UI->>Ctrl: POST /api/scans
+    Ctrl->>Svc: submit(record)
+    Svc->>Svc: accepted.get(clientId): none
+    Svc->>Rej: rejection(record)
+    Rej->>Catalog: stages()
+    Catalog-->>Rej: stages by id (cached copy)
+    Rej->>Lots: find(lotId)
+    alt circuit closed
+        Lots->>Consumer: GET /api/lots/lotId
+        Consumer--xLots: timeout, connection refused or 5xx
+        Lots->>Lots: failure recorded, log.warn("scans skip the lot checks")
+    else circuit open
+        Lots->>Lots: CallNotPermittedException (consumer not called)
+    end
+    Lots-->>Rej: Optional.empty()
+    Rej->>Rej: lot checks skipped
+    Rej->>Rej: route checks pass
+    Rej-->>Svc: Optional.empty()
+    Svc->>Rabbit: convertAndSend(exchange, routingKey, record)
+    Svc->>Svc: accepted.putIfAbsent(clientId, ScanResponse.accepted)
+    Ctrl-->>UI: 200 OK (accepted)
+    Note over Rabbit: The consumer flags anything the skipped lot checks let through
+```
+
+#### 8. Broker unavailable (503)
+The scan passes the checks, but RabbitMQ can't be reached.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor UI as orthanc-scan-ui
+    participant Ctrl as ScanController
+    participant Svc as ScanService
+    participant Rej as ScanRejectionService
+    participant Rabbit as RabbitMQ (RabbitTemplate)
+    participant Adv as ApiExceptionHandler
+
+    UI->>Ctrl: POST /api/scans
+    Ctrl->>Svc: submit(record)
+    Svc->>Svc: accepted.get(clientId): none
+    Svc->>Rej: rejection(record)
+    Rej-->>Svc: Optional.empty() (checks pass)
+    Svc->>Rabbit: convertAndSend(exchange, routingKey, record)
+    Rabbit--xSvc: AmqpException (broker unreachable)
+    Svc--xCtrl: AmqpException propagates
+    Ctrl--xAdv: AmqpException
+    Adv-->>UI: 503 {"message": "Scan service temporarily unavailable"}
+    Note over UI,Svc: Nothing stored in accepted, so the UI keeps the scan<br/>and retries with the same clientId
+```
+
 ### `GET /api/lot-stages`
 `LotStageController` gets the catalog from `StageCatalog.json()`, which is also where the scan checks get their stages (`StageCatalog.stages()`). Both go through the same `refresh()`, so the UI and the scan checks always see the same catalog and share one fetch a minute.
 
