@@ -55,9 +55,7 @@ classDiagram
             ~String WIP_LOCATION_NOT_ALLOWED$
             -LotClient lotClient
             -StageCatalog stageCatalog
-            -CircuitBreaker lotLookupCircuitBreaker
             +rejection(ScanRecord record) Optional~ScanResponse~
-            -findLot(String lotId) Optional~LotState~
             -lotRejection(ScanRecord, LotState, Optional stages)$ Optional~ScanResponse~
             -isMismatch(ScanRecord, LotState)$ boolean
             -mismatchRejection(ScanRecord, LotState, Map stages)$ ScanResponse
@@ -67,7 +65,9 @@ classDiagram
             <<Component>>
             -Duration TIMEOUT$
             -RestClient restClient
+            -CircuitBreaker circuitBreaker
             +find(String lotId) Optional~LotState~
+            -fetch(String lotId) Optional~LotState~
         }
         class LotState {
             <<record>>
@@ -239,7 +239,7 @@ classDiagram
     ScanService o-- "*" ScanResponse : accepted (idempotency cache)
     ScanRejectionService --> LotClient
     ScanRejectionService --> StageCatalog
-    ScanRejectionService --> CircuitBreaker : lotLookupCircuitBreaker
+    LotClient --> CircuitBreaker : lotLookupCircuitBreaker
     ScanRejectionService ..> ScanResponse : builds rejections
     LotClient ..> LotState : GET /api/lots/lotId
     LotState *-- "0..1" LastScan
@@ -272,7 +272,7 @@ classDiagram
 1. `ScanController` checks that the `Idempotency-Key` header (if present) matches `clientId`. If it doesn't, it returns 400.
 2. `ScanService.submit` looks up `clientId` in its in-memory `accepted` map. On a hit, it returns the original response.
 3. `ScanRejectionService.rejection` runs the checks in this order:
-   - **Lot checks**: `LotClient.find`, called through the `lot-lookup` circuit breaker. Rejection codes:
+   - **Lot checks**: against the lot from `LotClient.find`. The client calls the consumer through its own `lot-lookup` circuit breaker. It returns empty if the lot is unknown, the consumer fails, or the circuit is open, and then these checks are skipped. Rejection codes:
      - `LOT_<STATUS>`: the lot isn't active
      - `LOT_ON_HOLD`: the lot is on hold and the scan moves it out of its stage
      - `LOT_LOCATION_MISMATCH`: the records have the lot at another stage and the operator hasn't confirmed its location. This response includes a `RecordedLocation`.
