@@ -284,7 +284,32 @@ classDiagram
     note for Stage "Nested in StageCatalog"
 ```
 
+### Legend
+
+| Line | Mermaid | Meaning | Example |
+|---|---|---|---|
+| Solid, open arrow | `A --> B` | **Association:** A holds a reference to B, usually an injected field | `StageCatalog --> LotStageClient` |
+| Solid, filled diamond | `A *-- B` | **Composition:** B is part of A and lives only inside it | `StageCatalog *-- Snapshot` |
+| Solid, hollow diamond | `A o-- B` | **Aggregation:** A holds a collection of B | `Snapshot o-- Stage` |
+| Dashed, open arrow | `A ..> B` | **Dependency:** A uses, creates or returns B without keeping it as a field | `LotClient ..> LotLookup` |
+| Dashed, hollow triangle | `A ..\|> B` | **Realization:** A implements interface B | `UiConfig ..\|> WebMvcConfigurer` |
+
+Labels on a line name the method, bean or HTTP call involved. Multiplicities such as `"0..1"` and `"*"` give how many of B each A holds. Stereotypes mark what kind of class each box is:
+- `<<record>>`, `<<enumeration>>`, `<<interface>>` and `<<sealed interface>>` are Java types.
+- `<<Service>>`, `<<Component>>`, `<<Configuration>>`, `<<RestController>>` and the like are Spring annotations.
+- `<<external>>` marks a library or framework type.
+
 ## Key flows
+
+**Reading the sequence diagrams**
+
+| Arrow | Mermaid | Meaning |
+|---|---|---|
+| Solid line | `A->>B` | A calls B, or sends it a request or message |
+| Dashed line | `A-->>B` | Return value or response coming back |
+| Dashed line ending in ✕ | `A--xB` | The call failed: an exception, timeout or error comes back instead |
+
+Numbers give the order of the steps. `alt` boxes show alternative branches, and shaded `rect` regions group the phases of a scenario. Notes explain why a step happens.
 
 ### `POST /api/scans`
 1. `ScanController` checks that the `Idempotency-Key` header (if present) matches `clientId`. If it doesn't, it returns 400.
