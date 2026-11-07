@@ -6,7 +6,8 @@ asks the consumer whether the lot is on hold (`GET /api/lots/{lotId}`).
 
 It also serves the UI itself and the lot-stage catalog (`GET /api/lot-stages`, passed through from the consumer).
 Both are built to keep the plant scanning when the off-site consumer can't be reached. See
-[Deploying in the plant](#deploying-in-the-plant).
+[Deploying in the plant](#deploying-in-the-plant). Every `/api/**` call needs a logged-in user; see
+[Security](#security).
 
 ## Configuration files
 
@@ -16,7 +17,7 @@ create yourself in `src/main/resources/`, override them:
 
 | File                             | Holds                                                | Loaded                                  |
 |----------------------------------|------------------------------------------------------|-----------------------------------------|
-| `application-secrets.properties` | Your RabbitMQ username and password                  | Always, if it exists                    |
+| `application-secrets.properties` | Your RabbitMQ username and password, and app users   | Always, if it exists                    |
 | `application-local.properties`   | Local overrides: broker host, consumer URL, queue    | When the `local` profile is active      |
 
 Both files are git-ignored and left out of the built jar, so they never get committed or shipped. Don't
@@ -32,6 +33,13 @@ on the test broker:
 ```properties
 spring.rabbitmq.username=<your-dev-user>
 spring.rabbitmq.password=<your-dev-password>
+```
+
+In every mode, also add at least one user to log in to the app with (see [Security](#security)):
+
+```properties
+app.security.users[0].username=dev
+app.security.users[0].password={noop}dev
 ```
 
 ### Running with the local profile
@@ -159,6 +167,69 @@ Then start orthanc-scan-consumer, then this app:
 
 The management UI is at http://localhost:15672 (guest / guest).
 
+## Security
+
+Every `/api/**` call needs a logged-in user, or it gets a `401`. These stay open: the UI itself (it has to
+load before anyone can log in), `POST /api/auth/login`, and `/actuator/health/**` (so plant monitoring needs no
+login).
+
+| Endpoint                | Does                                                                                  |
+|-------------------------|---------------------------------------------------------------------------------------|
+| `POST /api/auth/login`  | Body `{"username":"…","password":"…"}`. `200 {"username":"…"}` and a session cookie, or `401`. |
+| `GET /api/auth/me`      | `200 {"username":"…"}` while the session is good, `401` otherwise.                    |
+| `POST /api/auth/logout` | Ends the session, `204`.                                                              |
+
+The session cookie (`JSESSIONID`) lasts 12 hours (`server.servlet.session.timeout`) so operators aren't logged
+out mid-shift. Sessions are kept in memory, so restarting the producer logs everyone out.
+
+### Users
+
+Until LDAP is in place, users are listed in config. Put them in `application-secrets.properties` in
+development. In the plant, put them in an `application.properties` next to the jar, which Spring Boot picks up
+from the working directory (the secrets file is left out of the jar):
+
+```properties
+app.security.users[0].username=jsmith
+app.security.users[0].password={bcrypt}$2y$10$…
+app.security.users[1].username=adoe
+app.security.users[1].password={bcrypt}$2y$10$…
+```
+
+The prefix says how the password is stored. Use `{bcrypt}` with a hash, made for example with
+`htpasswd -bnBC 10 "" '<password>' | tr -d ':\n'`. `{noop}` stores the password as plain text, so use it only
+for local development. With no users configured, the app still starts, logs a warning, and nobody can log in.
+
+### CSRF
+
+Every response sets an `XSRF-TOKEN` cookie. Every `POST`, including the login itself, has to send the cookie's
+value back in an `X-XSRF-TOKEN` header, or it gets a `403`. Angular's `HttpClient` does this by itself for
+same-origin requests. It skips the header for absolute URLs on another origin, so with `ng serve` use a dev
+proxy rather than `http://localhost:3000/...` URLs.
+
+To try it with curl:
+
+```bash
+curl -s -c jar -o /dev/null http://localhost:3000/api/auth/me            # 401, sets XSRF-TOKEN
+TOKEN=$(awk '$6 == "XSRF-TOKEN" {print $7}' jar)
+curl -b jar -c jar -H "X-XSRF-TOKEN: $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"username":"dev","password":"dev"}' http://localhost:3000/api/auth/login
+curl -b jar http://localhost:3000/api/lot-stages
+curl -b jar -X POST -H "X-XSRF-TOKEN: $TOKEN" http://localhost:3000/api/auth/logout
+```
+
+### HTTPS
+
+The session cookie is sent over plain HTTP, since the plant may serve the producer without TLS. Once it's
+behind HTTPS, set `server.servlet.session.cookie.secure=true` so the cookie is never sent unencrypted.
+
+### Moving to LDAP
+
+Logins are checked by the `AuthenticationManager` bean in `security/SecurityConfig.java`. To move to LDAP,
+replace it with one built on an LDAP provider (`LdapAuthenticationProvider`, or
+`ActiveDirectoryLdapAuthenticationProvider` for Active Directory) and drop `app.security.users`. The
+endpoints, cookies and CSRF handling stay the same, so the UI doesn't change. Put the LDAP server on the plant
+network, or logins stop when the plant loses its internet connection.
+
 ## Running tests
 
 ```bash
@@ -183,6 +254,7 @@ producer, so scanning keeps working when the plant loses its internet connection
 | Piece          | When the consumer can't be reached                                                         |
 |----------------|--------------------------------------------------------------------------------------------|
 | UI             | Served from this jar.                                                                      |
+| Logins         | Checked against the users in the producer's config (see [Security](#security)).            |
 | Lot stages     | Served from the last copy fetched, saved at `app.lot-stages.cache-file`; right away while the circuit breaker is open (below). |
 | Hold check     | Skipped after a 2 s timeout, or right away while the circuit breaker is open (below); the consumer checks holds again when it processes the scan. |
 | Scans          | Published to the plant's RabbitMQ and kept there until the consumer reconnects.            |

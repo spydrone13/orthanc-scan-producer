@@ -3,6 +3,7 @@ package com.spydrone.orthanc_scan_producer.scan;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -11,11 +12,18 @@ import org.junit.jupiter.api.Test;
 import org.springframework.amqp.AmqpConnectException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithAnonymousUser;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.spydrone.orthanc_scan_producer.security.SecurityConfig;
+
 @WebMvcTest(ScanController.class)
+@Import({SecurityConfig.class, WebConfig.class})
+@WithMockUser
 class ScanControllerTest {
 
 	private static final String BODY = """
@@ -33,7 +41,7 @@ class ScanControllerTest {
 	void acceptsScan() throws Exception {
 		given(scanService.submit(any())).willAnswer(inv -> ScanResponse.accepted(inv.getArgument(0)));
 
-		mvc.perform(post("/api/scans").contentType(MediaType.APPLICATION_JSON)
+		mvc.perform(post("/api/scans").with(csrf()).contentType(MediaType.APPLICATION_JSON)
 						.header("Idempotency-Key", "abc").content(BODY))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.clientId").value("abc"))
@@ -47,7 +55,7 @@ class ScanControllerTest {
 	void acceptsMissingWipLocation() throws Exception {
 		given(scanService.submit(any())).willAnswer(inv -> ScanResponse.accepted(inv.getArgument(0)));
 
-		mvc.perform(post("/api/scans").contentType(MediaType.APPLICATION_JSON)
+		mvc.perform(post("/api/scans").with(csrf()).contentType(MediaType.APPLICATION_JSON)
 						.content(BODY.replace("\"destinationWipLocation\":\"W1\",", "")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.destinationStage").value("S2"))
@@ -56,7 +64,7 @@ class ScanControllerTest {
 
 	@Test
 	void rejectsMissingField() throws Exception {
-		mvc.perform(post("/api/scans").contentType(MediaType.APPLICATION_JSON)
+		mvc.perform(post("/api/scans").with(csrf()).contentType(MediaType.APPLICATION_JSON)
 						.content(BODY.replace("\"lotId\":\"L1\",", "")))
 				.andExpect(status().isBadRequest());
 		verifyNoInteractions(scanService);
@@ -64,7 +72,7 @@ class ScanControllerTest {
 
 	@Test
 	void rejectsMissingDestinationStage() throws Exception {
-		mvc.perform(post("/api/scans").contentType(MediaType.APPLICATION_JSON)
+		mvc.perform(post("/api/scans").with(csrf()).contentType(MediaType.APPLICATION_JSON)
 						.content(BODY.replace("\"destinationStage\":\"S2\",", "")))
 				.andExpect(status().isBadRequest());
 		verifyNoInteractions(scanService);
@@ -72,7 +80,7 @@ class ScanControllerTest {
 
 	@Test
 	void rejectsMismatchedIdempotencyKey() throws Exception {
-		mvc.perform(post("/api/scans").contentType(MediaType.APPLICATION_JSON)
+		mvc.perform(post("/api/scans").with(csrf()).contentType(MediaType.APPLICATION_JSON)
 						.header("Idempotency-Key", "other").content(BODY))
 				.andExpect(status().isBadRequest());
 		verifyNoInteractions(scanService);
@@ -82,8 +90,23 @@ class ScanControllerTest {
 	void returns503WhenBrokerDown() throws Exception {
 		given(scanService.submit(any())).willThrow(new AmqpConnectException(new RuntimeException("down")));
 
-		mvc.perform(post("/api/scans").contentType(MediaType.APPLICATION_JSON).content(BODY))
+		mvc.perform(post("/api/scans").with(csrf()).contentType(MediaType.APPLICATION_JSON).content(BODY))
 				.andExpect(status().isServiceUnavailable())
 				.andExpect(jsonPath("$.message").exists());
+	}
+
+	@Test
+	@WithAnonymousUser
+	void requiresLogin() throws Exception {
+		mvc.perform(post("/api/scans").with(csrf()).contentType(MediaType.APPLICATION_JSON).content(BODY))
+				.andExpect(status().isUnauthorized());
+		verifyNoInteractions(scanService);
+	}
+
+	@Test
+	void requiresCsrfToken() throws Exception {
+		mvc.perform(post("/api/scans").contentType(MediaType.APPLICATION_JSON).content(BODY))
+				.andExpect(status().isForbidden());
+		verifyNoInteractions(scanService);
 	}
 }
