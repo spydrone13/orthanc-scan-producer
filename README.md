@@ -173,11 +173,11 @@ Every `/api/**` call needs a logged-in user, or it gets a `401`. These stay open
 load before anyone can log in), `POST /api/auth/login`, and `/actuator/health/**` (so plant monitoring needs no
 login).
 
-| Endpoint                | Does                                                                                  |
-|-------------------------|---------------------------------------------------------------------------------------|
+| Endpoint                | Does                                                                                           |
+|-------------------------|------------------------------------------------------------------------------------------------|
 | `POST /api/auth/login`  | Body `{"username":"…","password":"…"}`. `200 {"username":"…"}` and a session cookie, or `401`. |
-| `GET /api/auth/me`      | `200 {"username":"…"}` while the session is good, `401` otherwise.                    |
-| `POST /api/auth/logout` | Ends the session, `204`.                                                              |
+| `GET /api/auth/me`      | `200 {"username":"…"}` while the session is good, `401` otherwise.                             |
+| `POST /api/auth/logout` | Ends the session, `204`.                                                                       |
 
 The session cookie (`JSESSIONID`) lasts 12 hours (`server.servlet.session.timeout`) so operators aren't logged
 out mid-shift. Sessions are kept in memory, so restarting the producer logs everyone out.
@@ -189,8 +189,8 @@ development. In the plant, put them in an `application.properties` next to the j
 from the working directory (the secrets file is left out of the jar):
 
 ```properties
-app.security.users[0].username=jsmith
-app.security.users[0].password={bcrypt}$2y$10$…
+app.security.users[0].username=mike
+app.security.users[0].password=test
 app.security.users[1].username=adoe
 app.security.users[1].password={bcrypt}$2y$10$…
 ```
